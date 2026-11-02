@@ -15,6 +15,6 @@ jobs:
       - name: Install radio dependencies
         run: python -m pip install -r requirements.txt
       - name: Check Python syntax
-        run: python -m compileall -q sitdown_radio_preflight.py sitdown_desktop.py sitdown_commands.py sitdown_monitor.py sitdown_link.py sitdown_db_health.py sitdown_backup.py sitdown_restore_preflight.py sitdown_errors.py sitdown_broadcasts.py sitdown_online.py sitdown_utilities.py message_processing.py
+        run: python -m compileall -q -x '/\.git/' .
       - name: Unit tests
         run: python -m unittest discover -s tests

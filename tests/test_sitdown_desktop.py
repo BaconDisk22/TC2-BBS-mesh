@@ -248,6 +248,138 @@ class DesktopWindowTests(unittest.TestCase):
             self.app.control_request('announce', channel=0, text='Demo')
             self.app.supervisor.request.assert_not_called()
 
+    def test_wire_shows_each_network_separately_and_updates_live(self):
+        import configparser
+        from meshtastic.protobuf import mqtt_pb2
+        from sitdown_dual_mqtt import DualMQTTMonitors
+        env = mqtt_pb2.ServiceEnvelope()
+        env.gateway_id, env.channel_id = '!12345678', 'LongFast'
+        env.packet.id = 7
+        setattr(env.packet, 'from', 0x7b)
+        env.packet.to = 0xFFFFFFFF
+        env.packet.encrypted = b'ciphertext'
+        self.app.dual_mqtt = DualMQTTMonitors(configparser.ConfigParser())
+        self.app.select_page('BBS')
+        self.root.update()
+        self.app.dual_mqtt.receive('centralnj', env.SerializeToString())
+        self.app.dual_mqtt.receive('centralnj', b'junk')
+        self.app.poll()
+        central = self.app.wire_views['centralnj'].get('1.0', 'end')
+        south = self.app.wire_views['sjmesh'].get('1.0', 'end')
+        self.assertIn('from !0000007b', central)
+        self.assertIn('ENCRYPTED', central)
+        self.assertIn('Accepted 1 · duplicates 0 · rejected 1 (invalid mqtt envelope 1)', central)
+        self.assertNotIn('!0000007b', south)
+        self.app.dual_mqtt = None
+
+    def test_server_log_stays_readable_at_every_window_size(self):
+        linespace = int(self.app.output.tk.call('font', 'metrics', self.app.output.cget('font'), '-linespace'))
+        for geometry in ('1160x760', '1160x940', '1160x1040', '1600x1000'):
+            with self.subTest(geometry=geometry):
+                self.root.geometry(geometry)
+                self.root.update()
+                self.assertGreaterEqual(self.app.output.winfo_height() // linespace, desktop.LOG_MIN_LINES)
+
+    def test_every_settings_field_is_visible_or_scrollable(self):
+        from tkinter import ttk
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        for geometry in ('1160x760', '1160x940'):
+            self.root.geometry(geometry)
+            self.app.select_page('SETTINGS')
+            self.root.update()
+            notebook = next(w for w in descendants(self.app.active_page) if isinstance(w, ttk.Notebook))
+            for index, tab in enumerate(notebook.tabs()):
+                notebook.select(index)
+                self.root.update()
+                self.root.update()
+                holder = self.root.nametowidget(tab)
+                canvas = next(w for w in holder.winfo_children() if isinstance(w, tk.Canvas))
+                bar = next(w for w in holder.winfo_children() if isinstance(w, ttk.Scrollbar))
+                fits = canvas.winfo_children()[0].winfo_reqheight() <= canvas.winfo_height()
+                with self.subTest(geometry=geometry, tab=notebook.tab(index, 'text')):
+                    self.assertTrue(fits or bar.winfo_ismapped())
+                    if geometry == '1160x940':
+                        self.assertTrue(fits)
+            save = next(w for w in descendants(self.app.active_page)
+                        if isinstance(w, tk.Label) and w.cget('text').startswith('SAVE'))
+            self.assertTrue(save.winfo_ismapped())
+            self.assertLessEqual(save.winfo_rooty() + save.winfo_height(),
+                                 self.root.winfo_rooty() + self.root.winfo_height())
+
+    def test_chat_page_shows_messages_in_their_channel_tab_live(self):
+        from sitdown_chat import BROADCAST, chat_event
+        from types import SimpleNamespace
+        iface = SimpleNamespace(myInfo=SimpleNamespace(my_node_num=1), nodes={})
+        def heard(text, channel):
+            return chat_event({'from': 0x02ed8680, 'fromId': '!02ed8680', 'to': BROADCAST, 'channel': channel,
+                               'rxTime': 1792616310, 'decoded': {'portnum': 'TEXT_MESSAGE_APP',
+                                                                 'payload': text.encode()}}, iface)
+        self.app.snapshot = {**self.app.snapshot, 'channels': [{'index': 0, 'name': 'LongFast'},
+                                                               {'index': 1, 'name': 'CentralNJ'}]}
+        self.app.select_page('CHAT')
+        self.root.update()
+        self.assertEqual(sorted(self.app.chat_views), [0, 1])
+        self.app.chat_log.add(heard('Ayyy from CentralNJ', 1))
+        self.app.refresh_chat_views()
+        central = self.app.chat_views[1][1].get('1.0', 'end')
+        longfast = self.app.chat_views[0][1].get('1.0', 'end')
+        self.assertIn('Ayyy from CentralNJ', central)
+        self.assertNotIn('Ayyy from CentralNJ', longfast)
+
+    def test_chat_tabs_have_compose_box_and_byte_counter(self):
+        from tkinter import ttk
+        self.app.snapshot = {**self.app.snapshot, 'channels': [{'index': 0, 'name': 'Primary'},
+                                                               {'index': 1, 'name': 'CentralNJ'}]}
+        self.app.select_page('CHAT')
+        self.root.update()
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        widgets = list(descendants(self.app.active_page))
+        self.assertEqual(len([w for w in widgets if isinstance(w, ttk.Entry)]), 2)
+        self.assertEqual(len([w for w in widgets if isinstance(w, tk.Label) and w.cget('text') == 'SEND']), 2)
+        entry = next(w for w in widgets if isinstance(w, ttk.Entry))
+        entry.insert(0, 'Ayyy é')
+        self.root.update()
+        self.assertTrue(any(isinstance(w, tk.Label) and w.cget('textvariable') and
+                            self.root.globalgetvar(w.cget('textvariable')) == '7/200 bytes' for w in widgets))
+
+    def test_unread_counts_on_chat_button_and_tabs(self):
+        from sitdown_chat import BROADCAST, chat_event
+        from types import SimpleNamespace
+        iface = SimpleNamespace(myInfo=SimpleNamespace(my_node_num=1), nodes={})
+        def heard(text, channel, sender=0x02ed8680):
+            return chat_event({'from': sender, 'fromId': f'!{sender:08x}', 'to': BROADCAST, 'channel': channel,
+                               'rxTime': 1792616310, 'decoded': {'portnum': 'TEXT_MESSAGE_APP',
+                                                                 'payload': text.encode()}}, iface)
+        chat = next(b for b in self.app.nav_buttons if b.page_name == 'CHAT')
+        self.app.snapshot = {**self.app.snapshot, 'channels': [{'index': 0, 'name': 'Primary'},
+                                                               {'index': 1, 'name': 'CentralNJ'}]}
+        for text in ('one', 'two'):                       # CHAT closed: everything is unread
+            self.app.chat_log.add(heard(text, 1))
+            self.app.note_chat_message(heard(text, 1))
+        self.assertTrue(chat.cget('text').endswith('CHAT (2)'))
+        self.app.select_page('CHAT')                      # opens on Primary; CentralNJ still unread
+        self.root.update()
+        tabs = self.app.chat_tabs
+        self.assertEqual(tabs.tab(self.app.chat_tab_frames[1], 'text'), 'CentralNJ (2)')
+        self.assertEqual(chat.cget('bg'), self.app.colors['primary'])   # still highlighted with a count
+        self.app.note_chat_message(heard('on screen', 0))                # visible tab: not counted
+        self.app.note_chat_message({**heard('mine', 1), 'mine': True})   # own message: not counted
+        self.assertEqual(self.app.chat_unread[1], 2)
+        tabs.select(self.app.chat_tab_frames[1])
+        self.root.update()
+        self.assertEqual(tabs.tab(self.app.chat_tab_frames[1], 'text'), 'CentralNJ')
+        self.assertEqual(chat.cget('text'), chat.base_text)
+        self.app.select_page('HOME')
+        self.root.update()
+        self.app.note_chat_message(heard('later', 1))
+        self.assertTrue(chat.cget('text').endswith('CHAT (1)'))
+
     def test_settings_save_preserves_existing_config_and_validates(self):
         path = Path(self.directory.name) / 'config.ini'
         path.write_text('[interface]\ntype = tcp\nhostname = 192.0.2.10\n[menu]\nmain_menu_items = B,X\n')
@@ -257,7 +389,11 @@ class DesktopWindowTests(unittest.TestCase):
             fields = self.app.setting_fields
             fields[('startup', 'enabled')].set(True)
             fields[('startup', 'message')].set('Hello Jersey')
-            button = next(w for w in self.app.active_page.winfo_children()
+            def descendants(widget):
+                for child in widget.winfo_children():
+                    yield child
+                    yield from descendants(child)
+            button = next(w for w in descendants(self.app.active_page)
                           if isinstance(w, tk.Label) and w.cget('text').startswith('SAVE'))
             button.event_generate('<Button-1>')
             config = self.app.read_config()

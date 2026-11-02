@@ -19,6 +19,7 @@ import signal
 import threading
 from pathlib import Path
 from sitdown_control import start_reader, snapshot, handle, emit
+from sitdown_chat import chat_event
 
 from config_init import initialize_config, get_interface, init_cli_parser, merge_config
 from db_operations import initialize_database
@@ -73,6 +74,10 @@ def main():
 
     def receive_packet(packet, interface):
         on_receive(packet, interface)
+        if args.desktop_control:
+            event = chat_event(packet, interface)
+            if event is not None:
+                emit(event)
 
     pub.subscribe(receive_packet, system_config['mqtt_topic'])
 

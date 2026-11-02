@@ -36,7 +36,7 @@ jobs:
           python -m pip install -r requirements.txt -r requirements-mqtt.txt pyserial pyinstaller pillow
       - name: Run unit tests
         run: |
-          python -m compileall -q sitdown_radio_preflight.py sitdown_desktop.py sitdown_monitor.py
+          python -m compileall -q -x '/\.git/' .
           python -m unittest discover -s tests
           python -m unittest test_sitdown_personality
       - name: Check desktop layout and keyboard navigation
@@ -61,6 +61,9 @@ jobs:
           iconutil -c icns build/icon.iconset -o build/sitdown.icns
       - name: Package Intel Mac application
         run: |
+          VERSION="test-${GITHUB_SHA::7}"
+          echo "SITDOWN_VERSION=$VERSION" >> "$GITHUB_ENV"
+          python scripts/stamp_version.py source "$VERSION"
           python -m PyInstaller --noconfirm --clean --windowed --onedir \
             --name "The Sitdown BBS" \
             --icon build/sitdown.icns \
@@ -70,12 +73,19 @@ jobs:
             sitdown_desktop.py
           test -d "dist/The Sitdown BBS.app"
           test "$(lipo -archs 'dist/The Sitdown BBS.app/Contents/MacOS/The Sitdown BBS')" = "x86_64"
+          python scripts/stamp_version.py bundle "dist/The Sitdown BBS.app" "$VERSION"
       - name: Smoke test the packaged Intel app without radio
         run: |
           python - <<'PYTHON'
-          import subprocess
-          subprocess.run(['dist/The Sitdown BBS.app/Contents/MacOS/The Sitdown BBS',
-                          '--sitdown-smoke-test'], check=True, timeout=45)
+          import os, plistlib, subprocess
+          app = 'dist/The Sitdown BBS.app'
+          out = subprocess.run([app + '/Contents/MacOS/The Sitdown BBS', '--sitdown-smoke-test'],
+                               check=True, timeout=45, capture_output=True, text=True).stdout
+          expected = os.environ['SITDOWN_VERSION']
+          assert f'SITDOWN_SMOKE_OK version={expected}' in out, out[-2000:]
+          with open(app + '/Contents/Info.plist', 'rb') as f:
+              assert plistlib.load(f)['CFBundleShortVersionString'] == expected
+          print('Packaged app reports', expected)
           PYTHON
       - name: Create unsigned test DMG
         run: |

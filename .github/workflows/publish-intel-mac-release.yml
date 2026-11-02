@@ -57,7 +57,7 @@ jobs:
       - name: Validate source and tests
         run: |
           test "$(uname -m)" = "x86_64"
-          python -m compileall -q sitdown_desktop.py sitdown_monitor.py command_handlers.py
+          python -m compileall -q -x '/\.git/' .
           python -m unittest discover -s tests
           python -m unittest test_sitdown_personality
           python -m unittest discover -s tests -p 'test_jersey_replies.py'
@@ -71,7 +71,13 @@ jobs:
             sips -z "$double" "$double" build/sitdown-icon.png --out "build/icon.iconset/icon_${size}x${size}@2x.png" >/dev/null
           done
           iconutil -c icns build/icon.iconset -o build/sitdown.icns
+      - name: Stamp version into source
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: python scripts/stamp_version.py source "$VERSION"
       - name: Package app
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
           python -m PyInstaller --noconfirm --clean --windowed --onedir \
             --name "The Sitdown BBS" --icon build/sitdown.icns \
@@ -79,12 +85,21 @@ jobs:
             --hidden-import paho.mqtt.client --collect-all meshtastic --collect-all pubsub sitdown_desktop.py
           test -d "dist/The Sitdown BBS.app"
           lipo -archs "dist/The Sitdown BBS.app/Contents/MacOS/The Sitdown BBS" | grep -q x86_64
+          python scripts/stamp_version.py bundle "dist/The Sitdown BBS.app" "$VERSION"
       - name: Smoke test the packaged Intel app without radio
+        env:
+          SITDOWN_VERSION: ${{ steps.version.outputs.value }}
         run: |
           python - <<'PYTHON'
-          import subprocess
-          subprocess.run(['dist/The Sitdown BBS.app/Contents/MacOS/The Sitdown BBS',
-                          '--sitdown-smoke-test'], check=True, timeout=45)
+          import os, plistlib, subprocess
+          app = 'dist/The Sitdown BBS.app'
+          out = subprocess.run([app + '/Contents/MacOS/The Sitdown BBS', '--sitdown-smoke-test'],
+                               check=True, timeout=45, capture_output=True, text=True).stdout
+          expected = os.environ['SITDOWN_VERSION']
+          assert f'SITDOWN_SMOKE_OK version={expected}' in out, out[-2000:]
+          with open(app + '/Contents/Info.plist', 'rb') as f:
+              assert plistlib.load(f)['CFBundleShortVersionString'] == expected
+          print('Packaged app reports', expected)
           PYTHON
       - name: Build release DMG and checksums
         env:

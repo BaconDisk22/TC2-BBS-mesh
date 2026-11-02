@@ -7,11 +7,27 @@ import threading
 from sitdown_utilities import lookup_nodes
 
 PREFIX = 'SITDOWN_EVENT '
+_emit_lock = threading.Lock()
 
 
 def emit(payload):
+    """Write one complete event line; safe from the radio receive thread too."""
     token = os.environ.get('SITDOWN_CONTROL_TOKEN', '')
-    print(PREFIX + token + ' ' + json.dumps(payload), flush=True)
+    line = PREFIX + token + ' ' + json.dumps(payload, default=_json_safe) + '\n'
+    with _emit_lock:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+
+
+def _json_safe(value):
+    """Convert protobuf messages and enum-like values for desktop telemetry."""
+    from google.protobuf.json_format import MessageToDict
+    from google.protobuf.message import Message
+    if isinstance(value, Message):
+        return MessageToDict(value, preserving_proto_field_name=True)
+    if isinstance(value, (bytes, bytearray)):
+        return value.hex()
+    raise TypeError(f'Unsupported desktop telemetry type: {type(value).__name__}')
 
 
 def start_reader(stream=None):
@@ -39,6 +55,10 @@ def handle(service, request):
     try:
         if action == 'announce':
             result = service.announce(request.get('channel'), request.get('text', ''), local=True)
+        elif action == 'chat':
+            event = service.chat_send(request.get('channel'), request.get('text', ''), on_status=emit)
+            return {'type': 'result', 'action': action,
+                    'text': 'Chat message submitted to radio; waiting for a relay.', 'chat': event}
         elif action == 'weather':
             result = service.weather.report()
         elif action == 'snapshot':
