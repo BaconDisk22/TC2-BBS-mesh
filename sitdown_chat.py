@@ -173,6 +173,11 @@ class ChatLog:
         for rows in self._messages.values():
             for event in reversed(rows):
                 if event.get('mine') and event.get('id') == packet_id:
+                    # A late or duplicate callback must not erase a final radio result.
+                    if event.get('status') in ('relayed', 'failed'):
+                        return None
+                    if status == 'sending':
+                        return None
                     event['status'], event['reason'] = status, str(reason or '')[:40]
                     self._save()
                     return event
