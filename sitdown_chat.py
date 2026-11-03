@@ -134,7 +134,13 @@ class ChatLog:
         except (OSError, ValueError, KeyError, TypeError):
             logging.warning('Chat history unreadable; kept as %s.bad and starting fresh.', self.path.name)
             try:
-                os.replace(self.path, self.path.with_name(self.path.name + '.bad'))
+                # Never overwrite an earlier damaged-history backup.
+                backup = self.path.with_name(self.path.name + '.bad')
+                suffix = 1
+                while backup.exists():
+                    backup = self.path.with_name(f'{self.path.name}.bad.{suffix}')
+                    suffix += 1
+                os.replace(self.path, backup)
             except OSError:
                 pass
             return
