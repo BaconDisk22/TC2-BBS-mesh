@@ -108,7 +108,7 @@ def clean_event(event):
     if clean['mine']:
         packet_id = event.get('id')
         clean['id'] = packet_id if isinstance(packet_id, int) and not isinstance(packet_id, bool) else 0
-        clean['status'] = event.get('status') if event.get('status') in STATUSES else 'unconfirmed'
+        clean['status'] = event.get('status') if isinstance(event.get('status'), str) and event.get('status') in STATUSES else 'unconfirmed'
         clean['reason'] = str(event.get('reason') or '')[:40]
     return clean
 
