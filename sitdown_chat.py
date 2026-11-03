@@ -144,8 +144,12 @@ class ChatLog:
             except OSError:
                 pass
             return
+        # Iterate over a bounded tail of each channel, even if an external file
+        # contains far more rows than our configured retention limit.
         for rows in stored.values():
-            for row in rows if isinstance(rows, list) else ():
+            if not isinstance(rows, list):
+                continue
+            for row in rows[-self.limit:]:
                 event = clean_event(row) if isinstance(row, dict) else None
                 if event is not None and event.get('status') == 'sending':
                     event['status'] = 'unconfirmed'     # its reply was lost with the old session
