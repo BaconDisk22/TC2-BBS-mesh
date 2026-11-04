@@ -26,10 +26,11 @@ jobs:
         with:
           python-version: '3.11'
           architecture: arm64
-      - name: Verify Intel runner and Tk
+      - name: Verify Apple Silicon runner, Python architecture and Tk
         run: |
+          uname -a
+          python -c "import platform, sys, tkinter; print('Python:', sys.version); print('Machine:', platform.machine()); print('Tk:', tkinter.TkVersion); assert platform.machine() == 'arm64'"
           test "$(uname -m)" = "arm64"
-          python -c "import tkinter; print('Tk', tkinter.TkVersion)"
       - name: Install application and packager
         run: |
           python -m pip install --upgrade pip
