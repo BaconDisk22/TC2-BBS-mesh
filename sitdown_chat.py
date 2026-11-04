@@ -108,7 +108,7 @@ def clean_event(event):
     if clean['mine']:
         packet_id = event.get('id')
         clean['id'] = packet_id if isinstance(packet_id, int) and not isinstance(packet_id, bool) else 0
-        clean['status'] = event.get('status') if event.get('status') in STATUSES else 'unconfirmed'
+        clean['status'] = event.get('status') if isinstance(event.get('status'), str) and event.get('status') in STATUSES else 'unconfirmed'
         clean['reason'] = str(event.get('reason') or '')[:40]
     return clean
 
@@ -134,12 +134,22 @@ class ChatLog:
         except (OSError, ValueError, KeyError, TypeError):
             logging.warning('Chat history unreadable; kept as %s.bad and starting fresh.', self.path.name)
             try:
-                os.replace(self.path, self.path.with_name(self.path.name + '.bad'))
+                # Never overwrite an earlier damaged-history backup.
+                backup = self.path.with_name(self.path.name + '.bad')
+                suffix = 1
+                while backup.exists():
+                    backup = self.path.with_name(f'{self.path.name}.bad.{suffix}')
+                    suffix += 1
+                os.replace(self.path, backup)
             except OSError:
                 pass
             return
+        # Iterate over a bounded tail of each channel, even if an external file
+        # contains far more rows than our configured retention limit.
         for rows in stored.values():
-            for row in rows if isinstance(rows, list) else ():
+            if not isinstance(rows, list):
+                continue
+            for row in rows[-self.limit:]:
                 event = clean_event(row) if isinstance(row, dict) else None
                 if event is not None and event.get('status') == 'sending':
                     event['status'] = 'unconfirmed'     # its reply was lost with the old session
@@ -173,6 +183,11 @@ class ChatLog:
         for rows in self._messages.values():
             for event in reversed(rows):
                 if event.get('mine') and event.get('id') == packet_id:
+                    # A late or duplicate callback must not erase a final radio result.
+                    if event.get('status') in ('relayed', 'failed'):
+                        return None
+                    if status == 'sending':
+                        return None
                     event['status'], event['reason'] = status, str(reason or '')[:40]
                     self._save()
                     return event
