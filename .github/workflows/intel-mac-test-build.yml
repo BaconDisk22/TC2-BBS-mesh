@@ -87,13 +87,35 @@ jobs:
               assert plistlib.load(f)['CFBundleShortVersionString'] == expected
           print('Packaged app reports', expected)
           PYTHON
+      - name: Check the first-launch helper against the built app
+        run: |
+          set -u
+          app="dist/The Sitdown BBS.app"
+          expect() { want=$1; shift; set +e; out=$(bash scripts/check-mac-launch.sh "$@"); got=$?; set -e
+                     echo "$out" | tail -1; test "$got" = "$want" || { echo "expected exit $want, got $got"; exit 1; }; }
+          expect 0 "$app"
+          rm -rf /tmp/fl && mkdir -p /tmp/fl && ditto --noextattr "$app" "/tmp/fl/Pending.app"
+          xattr -w com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");Safari;$(uuidgen)" "/tmp/fl/Pending.app"
+          expect 1 "/tmp/fl/Pending.app"
+          ditto --noextattr "$app" "/tmp/fl/Damaged.app"
+          printf x >> "/tmp/fl/Damaged.app/Contents/Resources/base_library.zip"
+          expect 2 "/tmp/fl/Damaged.app"
+          expect 4 "/tmp/fl/Missing.app"
       - name: Create unsigned test DMG
         run: |
           mkdir -p dmg-staging
           cp -R "dist/The Sitdown BBS.app" dmg-staging/
           ln -s /Applications dmg-staging/Applications
+          cp "packaging/READ ME FIRST.txt" dmg-staging/
+          cp scripts/check-mac-launch.sh dmg-staging/
           bash scripts/create_dmg.sh "The-Sitdown-BBS-Intel-Test.dmg" "The Sitdown BBS TEST"
           shasum -a 256 "The-Sitdown-BBS-Intel-Test.dmg" > SHA256SUMS.txt
+      - name: Verify DMG includes first-launch help
+        run: |
+          mnt=$(hdiutil attach -nobrowse -readonly "The-Sitdown-BBS-Intel-Test.dmg" | awk -F'\t' '/\/Volumes\//{print $NF}')
+          ls -1 "$mnt"
+          test -f "$mnt/READ ME FIRST.txt" && test -f "$mnt/check-mac-launch.sh" && test -d "$mnt/The Sitdown BBS.app"
+          hdiutil detach "$mnt" -quiet
       - name: Upload downloadable test build
         uses: actions/upload-artifact@v4
         with:

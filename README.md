@@ -129,7 +129,8 @@ The current desktop dashboard uses Italian red and green accents, dark charcoal 
 
 - **GitHub Releases:** Look for the latest `The-Sitdown-BBS-Intel-Mac-*.dmg` attached to a successful release.
 - **GitHub Actions:** Open a successful **Intel Mac test build** run and download the **The-Sitdown-BBS-Intel-Mac-Test** artifact. Artifacts expire after 14 days.
-- **Intel Mac:** The workflow targets x86-64 macOS. Builds are currently **unsigned and unnotarized**; approve trusted builds through macOS Privacy & Security if prompted.
+- **Intel Mac:** The workflow targets x86-64 macOS. Builds are currently **unsigned and unnotarized**.
+- **First launch:** open the app from Finder and give macOS a few minutes to check it — it can look frozen, but the app hasn't started yet. If it's blocked, use System Settings → Privacy & Security → **Open Anyway**. Each DMG has a **READ ME FIRST** and a `check-mac-launch.sh` checker; details in [docs/MAC_FIRST_LAUNCH.md](docs/MAC_FIRST_LAUNCH.md).
 - **Demo mode:** Launch the app and enable **Demo mode (no radio)** to explore the dashboard without transmitting.
 - **Live radio:** Configure your Meshtastic device before starting the real BBS server. A running process alone does not confirm a connected radio.
 

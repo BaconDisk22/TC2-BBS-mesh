@@ -22,6 +22,7 @@ These are unsigned test builds until release gates are met. A passing GitHub Act
 ## Physical Mac acceptance (run separately on Intel and Apple Silicon)
 
 - [ ] DMG mounts and app launches with Gatekeeper approval where needed; do not disable Gatekeeper globally.
+- [ ] DMG contains `READ ME FIRST.txt` and `check-mac-launch.sh`; the checker reports PENDING on the fresh download and READY after the first Finder launch (see docs/MAC_FIRST_LAUNCH.md).
 - [ ] Demo mode launches without radio or transmissions.
 - [ ] Settings survive quit and relaunch.
 - [ ] Wi-Fi/TCP radio connection and disconnect/reconnect are observed using authorized equipment.
