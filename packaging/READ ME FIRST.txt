@@ -1,0 +1,35 @@
+THE SITDOWN BBS — READ ME FIRST (macOS)
+=======================================
+
+This is an unsigned test build. macOS checks unsigned apps the first time
+you open them, and that first check can take a few minutes on an Intel Mac.
+Nothing is wrong while it checks — the app simply has not started yet.
+
+INSTALL
+  1. Drag "The Sitdown BBS" onto the Applications folder in this window.
+  2. Eject this disk image.
+
+FIRST LAUNCH (once per downloaded copy)
+  1. Open Applications in Finder and double-click "The Sitdown BBS".
+  2. Wait. macOS may show "Verifying…" while it scans the app. On an Intel
+     Mac this can take several minutes the first time.
+  3. If macOS says the app "can't be opened" or "Not Opened":
+       System Settings → Privacy & Security → scroll down →
+       "The Sitdown BBS was blocked…" → Open Anyway → enter your password.
+  4. Later launches start normally.
+
+PLEASE DON'T
+  - Run the program inside the app (Contents/MacOS/…) from Terminal for the
+    first launch. macOS can't show its prompt there, so the launch just waits
+    with no message — this looks like a hang.
+  - Disable Gatekeeper or run "sudo spctl --master-disable".
+
+IF IT SEEMS STUCK
+  1. Quit any stuck copy: Activity Monitor → search "Sitdown" → Quit.
+  2. In Terminal, check what macOS thinks of the app:
+       bash "/Volumes/The Sitdown BBS"*/check-mac-launch.sh
+     (or, after ejecting: bash ~/Downloads/check-mac-launch.sh if you copied it)
+  3. The check never changes anything; it tells you the next step.
+
+Intel builds need an Intel Mac; Apple Silicon builds need an M-series Mac.
+Download the matching DMG.
