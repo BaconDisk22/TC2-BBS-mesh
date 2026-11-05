@@ -29,7 +29,11 @@ def lookup_nodes(nodes, query=''):
     wanted_id = node_id(query) if query else None
     results = []
     for key, node in list((nodes or {}).items()):
+        if not isinstance(node, dict):
+            continue
         user = node.get('user') or {}
+        if not isinstance(user, dict):
+            user = {}
         identity = node_id(user.get('id')) or node_id(key) or node_id(node.get('num'))
         names = [str(user.get(field, '')) for field in ('shortName', 'longName')]
         if query and not ((wanted_id is not None and wanted_id == identity) or any(query in name.casefold() for name in names)):
