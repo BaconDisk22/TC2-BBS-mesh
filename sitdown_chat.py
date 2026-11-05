@@ -32,7 +32,9 @@ def chat_event(packet, interface, clock=time.time):
     if not 0 <= channel < MAX_CHANNELS:
         return None
     nodes = getattr(interface, 'nodes', None) or {}
-    user = (nodes.get(sender) or {}).get('user') or {}
+    node = nodes.get(sender) if isinstance(nodes, dict) else None
+    user = node.get('user') if isinstance(node, dict) else None
+    user = user if isinstance(user, dict) else {}
     mine = packet.get('from') == getattr(getattr(interface, 'myInfo', None), 'my_node_num', None)
     return {'type': 'chat', 'channel': channel, 'from': sender,
             'short': str(user.get('shortName', '')), 'long': str(user.get('longName', '')),
