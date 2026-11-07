@@ -1,6 +1,9 @@
 # Two-way MQTT design gate for THE SITDOWN BBS
 
-**Current implementation:** independent receive-only MQTT activity counters. The app does not decode, decrypt, bridge or publish broker traffic. This document is a proposed design, not an implemented feature.
+**Current implementation:**
+- **Receive:** the app decrypts only channels the operator gave a key for (`channel_keys`). Their broadcast text appears in CHAT; everything else stays metadata only.
+- **Send:** the operator can publish typed channel text through `sitdown_mqtt_sender.py`, the only publishing path. It is gated by `allow_publish` (off by default), a per-channel confirmation each session, a channel key, a subscribed `+` topic, a connected broker and a rate limit.
+- **Never:** the app does not bridge or forward packets between radio and MQTT, or between networks.
 
 ## Protocol compatibility
 - Confirm the authorized CentralNJ and SJMesh MQTT root topics, broker authentication, TLS, and channel policies with network operators.

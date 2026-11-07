@@ -27,6 +27,8 @@ from sitdown_monitor import ServerSupervisor
 from sitdown_mqtt_feed import MeshFeed, NETWORK_LABELS, format_stats
 from sitdown_chat import ChatLog, dm_peer, event_key, mqtt_room, status_label
 from sitdown_dm import peer_id
+from sitdown_mqtt_crypto import safe_channel_keys
+from sitdown_mqtt_sender import MQTTSender, send_rooms
 from sitdown_version import VERSION
 from sitdown_personality import Personality
 import zipfile
@@ -67,6 +69,9 @@ class SitdownApp:
         self.chat_tab_frames = {}
         self.dm_peers = []
         self.dm_confirmed = set()
+        self.mqtt_sender = MQTTSender()
+        self.mqtt_confirmed = set()
+        self.mqtt_pending = {}
         self.supervisor = None
         self.restart_at = None
         self.retry_count = 0
@@ -538,8 +543,25 @@ class SitdownApp:
         """(key, tab name) for each channel, then each direct conversation (this session's first)."""
         tabs = list(self.chat_channel_names().items())
         peers = list(dict.fromkeys(self.dm_peers + self.chat_log.peers()))
-        rooms = [(key, self.room_tab_name(key)) for key in self.chat_log.rooms()]
+        keys = list(dict.fromkeys(self.chat_log.rooms() + self.sendable_rooms()))
+        rooms = [(key, self.room_tab_name(key)) for key in sorted(keys)]
         return tabs + [(f'dm:{peer}', self.dm_tab_name(peer)) for peer in peers] + rooms
+
+    def sendable_rooms(self):
+        """MQTT chat keys the operator turned sending on for (shown even before any message)."""
+        config = self.read_config()
+        found = []
+        for network in NETWORK_LABELS:
+            section = 'mqtt_' + network
+            try:
+                allowed = (config.getboolean(section, 'enabled', fallback=False)
+                           and config.getboolean(section, 'allow_publish', fallback=False))
+            except ValueError:
+                allowed = False
+            if allowed:
+                keys = safe_channel_keys(config.get(section, 'channel_keys', fallback=''))
+                found += [f'mqtt:{network}:{room}' for room in send_rooms(config.get(section, 'topic', fallback=''), keys)]
+        return found
 
     @staticmethod
     def room_tab_name(key):
@@ -564,12 +586,14 @@ class SitdownApp:
         tabs.pack(fill='both', expand=True, pady=(6, 0))
         self.chat_views = {}
         self.chat_tabs, self.chat_tab_frames = tabs, {}
+        sendable = set(self.sendable_rooms())
         for index, name in self.chat_tab_list():
             frame = tk.Frame(tabs, bg=THEME['panel'], padx=10, pady=10)
             tabs.add(frame, text=name)
             self.chat_tab_frames[index] = frame
-            if mqtt_room(index):
-                tk.Label(frame, text='Read only: text from the MQTT broker for a channel you have the key for.',
+            if mqtt_room(index) and index not in sendable:
+                network = NETWORK_LABELS.get(mqtt_room(index)[0], '')
+                tk.Label(frame, text=f"Read only. To send here, turn on 'Allow sending' on the {network} Settings tab.",
                          bg=THEME['panel'], fg=THEME['highlight']).pack(side='bottom', anchor='w', pady=(6, 0))
                 box = self.page_text(frame, self.chat_log.render(index, name))
                 box.see('end')
@@ -581,7 +605,9 @@ class SitdownApp:
             counter = tk.StringVar(value='0/200 bytes')
             entry = ttk.Entry(compose, textvariable=draft, style='Desk.TEntry')
             peer = dm_peer(index)
-            if peer:
+            if mqtt_room(index):
+                send = lambda _event=None, k=index, n=name, d=draft: self.send_mqtt(k, n, d)
+            elif peer:
                 send = lambda _event=None, p=peer, n=name, d=draft: self.send_dm(p, n, d)
             else:
                 send = lambda _event=None, i=index, n=name, d=draft: self.send_chat(i, n, d)
@@ -635,6 +661,8 @@ class SitdownApp:
         """Server log line for the radio's reply to one of our chat messages."""
         if sent.get('type') == 'dm':
             name = 'DM ' + self.dm_tab_name(sent['peer'])[2:]
+        elif sent.get('type') == 'mqtt':
+            name = 'MQTT ' + self.room_tab_name(event_key(sent))[2:]
         else:
             name = 'Chat ' + self.chat_channel_names().get(sent['channel'], f"Channel {sent['channel']}")
         text = sent['text'] if len(sent['text']) <= 40 else sent['text'][:39] + '…'
@@ -783,7 +811,7 @@ class SitdownApp:
         if self.dual_mqtt is not None:
             for network, result in self.dual_mqtt.drain_events(limit=50):
                 self.mesh_feed.add(network, result)
-                if getattr(result, 'text', None) is not None:
+                if getattr(result, 'text', None) is not None and not self.own_mqtt_echo(network, result):
                     self.receive_mqtt_text(network, result)
         for network, box in self.wire_views.items():
             if not box.winfo_exists():
@@ -797,6 +825,55 @@ class SitdownApp:
             box.insert('1.0', text)
             box.configure(state='disabled')
             box.yview_moveto(top)
+
+    def own_mqtt_echo(self, network, result):
+        """Our own sent message coming back from the broker marks it '✓ on broker' instead of a new message."""
+        s = result.summary
+        key = self.mqtt_pending.get(s.packet_id)
+        if key is None or key != f'mqtt:{network}:{s.channel_id}':
+            return False
+        del self.mqtt_pending[s.packet_id]
+        sent = self.chat_log.set_status(s.packet_id, 'posted')
+        if sent is not None:
+            self.log_chat_status(sent)
+        return True
+
+    def send_mqtt(self, key, name, draft):
+        """Operator text to an MQTT channel: every gate in MQTTSender, plus a confirmation once per channel."""
+        network, room = mqtt_room(key)
+        text = draft.get()
+        if self.demo.get():
+            self.show_info('Message not sent', 'Demo mode: transmissions disabled')
+            return False
+        if not text.strip() or len(text.encode('utf-8')) > 200:
+            self.show_info('Message not sent', 'Message must contain 1–200 UTF-8 bytes.')
+            return False
+        if key not in self.mqtt_confirmed:
+            if not messagebox.askyesno(f'Send on {name[2:]}?',
+                                       f'This publishes your message, encrypted with the {room} key, to the '
+                                       f'{NETWORK_LABELS[network]} MQTT broker. Radios whose gateways downlink '
+                                       f'{room} will hear it.\n\nAllow sending here for the rest of this session?',
+                                       parent=self.root):
+                return False
+            self.mqtt_confirmed.add(key)
+        monitor = self.dual_mqtt.monitors.get(network) if self.dual_mqtt is not None else None
+        try:
+            packet_id, sender = self.mqtt_sender.send(
+                self.read_config(), network, room, text, client=getattr(monitor, 'client', None),
+                sender=self.snapshot.get('me') or getattr(self, 'radio_node', None), demo=self.demo.get(), session_confirmed=True)
+        except ValueError as exc:
+            self.log(f'{NETWORK_LABELS[network]} {room}: message not sent — {exc}')
+            self.show_info('Message not sent', str(exc))
+            return False
+        self.mqtt_pending[packet_id] = key
+        while len(self.mqtt_pending) > 100:
+            self.mqtt_pending.pop(next(iter(self.mqtt_pending)))
+        self.chat_log.add({'type': 'mqtt', 'network': network, 'room': room, 'from': sender, 'short': '',
+                           'long': '', 'text': text, 'rx_time': int(time.time()), 'mine': True,
+                           'id': packet_id, 'status': 'sending'})
+        self.log(f'{NETWORK_LABELS[network]} {room}: message published; waiting for the broker to echo it.')
+        draft.set('')
+        return True
 
     def receive_mqtt_text(self, network, result):
         """Channel text opened with the operator's key goes to that channel's CHAT tab."""
@@ -879,8 +956,8 @@ class SitdownApp:
             'announcements': [('admin_nodes', 'Remote administrator node IDs (comma separated)', '')],
             'weather': [('internet_enabled', 'Enable internet weather', 'bool'), ('local_report', 'Offline report (include time)', ''), ('latitude', 'Latitude', '40.20'), ('longitude', 'Longitude', '-74.50')],
             'mqtt_monitor': [('enabled', 'Enable MQTT counter', 'bool'), ('host', 'Broker hostname', ''), ('topic', 'Subscription topic', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', '')],
-            'mqtt_centralnj': [('enabled', 'Enable CentralNJ monitor', 'bool'), ('auto_connect', 'Auto-connect CentralNJ at startup', 'bool'), ('host', 'Broker hostname', 'mqtt.meshtastic.org'), ('topic', 'Topics (up to 4, comma-separated): exact, or msh/<region>/2/e/<channel>/+', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', ''), ('channel_keys', 'Channel keys to read text (Name=PSK, comma-separated, e.g. CentralNJ=base64key)', '')],
-            'mqtt_sjmesh': [('enabled', 'Enable SJMesh monitor', 'bool'), ('auto_connect', 'Auto-connect SJMesh at startup', 'bool'), ('host', 'Broker hostname', 'mqtt.sjmesh.net'), ('topic', 'Topics (up to 4, comma-separated): exact, or msh/<region>/2/e/<channel>/+', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', ''), ('channel_keys', 'Channel keys to read text (Name=PSK, comma-separated, e.g. LongFast=AQ==)', '')],
+            'mqtt_centralnj': [('enabled', 'Enable CentralNJ monitor', 'bool'), ('auto_connect', 'Auto-connect CentralNJ at startup', 'bool'), ('host', 'Broker hostname', 'mqtt.meshtastic.org'), ('topic', 'Topics (up to 4, comma-separated): exact, or msh/<region>/2/e/<channel>/+', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', ''), ('channel_keys', 'Channel keys to read text (Name=PSK, comma-separated, e.g. CentralNJ=base64key)', ''), ('allow_publish', 'Allow sending to CentralNJ from CHAT (off by default)', 'bool'), ('send_as', 'Send as node id (blank = your BBS radio)', '')],
+            'mqtt_sjmesh': [('enabled', 'Enable SJMesh monitor', 'bool'), ('auto_connect', 'Auto-connect SJMesh at startup', 'bool'), ('host', 'Broker hostname', 'mqtt.sjmesh.net'), ('topic', 'Topics (up to 4, comma-separated): exact, or msh/<region>/2/e/<channel>/+', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', ''), ('channel_keys', 'Channel keys to read text (Name=PSK, comma-separated, e.g. LongFast=AQ==)', ''), ('allow_publish', 'Allow sending to SJMesh from CHAT (off by default)', 'bool'), ('send_as', 'Send as node id (blank = your BBS radio)', '')],
             'personality': [('public_mode', 'Public greeting: clean / attitude / uncensored', 'clean'), ('allow_public_profanity', 'Allow profanity in generated public greetings', 'bool')],
         }
         for section, entries in sections.items():
@@ -933,6 +1010,9 @@ class SitdownApp:
                                              'msh/<region>/2/e/<channel>/+ for one channel. No other wildcards.')
                         if not 1 <= config.getint(section, 'port') <= 65535:
                             raise ValueError(f'{section}: port must be 1–65535.')
+                    send_as = config.get(section, 'send_as', fallback='').strip()
+                    if send_as and peer_id(send_as) is None:
+                        raise ValueError(f'{section}: "Send as node id" must look like !1234abcd.')
                     from sitdown_mqtt_crypto import parse_channel_keys
                     try:
                         parse_channel_keys(config.get(section, 'channel_keys', fallback=''))
@@ -1390,6 +1470,8 @@ class SitdownApp:
                 elif kind == "control":
                     if value.get('type') == 'snapshot':
                         self.snapshot = value
+                        if value.get('me'):
+                            self.radio_node = value['me']      # kept for MQTT sends after the server stops
                         self.node_count.set(f"Known nodes: {len(value.get('nodes') or [])}")
                     elif value.get('type') == 'chat':
                         if self.chat_log.add(value):

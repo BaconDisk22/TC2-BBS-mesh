@@ -75,6 +75,7 @@ The desktop launcher includes a few handy tools for keeping tabs on the family b
 | **Radio activity** | Reports incoming Meshtastic messages observed in BBS logs without claiming a permanent connection |
 | **Chat / Direct messages** | CHAT has a tab per radio channel plus a ✉ tab per person. **NEW DIRECT MESSAGE** picks a heard node. For 10 minutes after you message someone, their plain replies come to your tab instead of the BBS menu (replies starting with `/` still reach the BBS); **END CONVERSATION** hands them back early. Ticks: ✓ relayed, ✓✓ delivered |
 | **MQTT channel text** | Enter a channel's key on the CentralNJ or SJMesh Settings tab (**Channel keys**, `Name=PSK`, e.g. `LongFast=AQ==`). Text on that channel then shows in a 🌐 CHAT tab. Channels without a key stay metadata only on The Wire. Keys stay in your local config (mode 600) and are never logged |
+| **MQTT sending** | Off by default. Tick **Allow sending** on a network's Settings tab (channel key + `msh/<region>/2/e/<channel>/+` topic required) and that 🌐 tab gets a SEND box. Messages are encrypted with the channel key and sent as your BBS radio's node id (or **Send as node id**). You confirm once per channel each session. ✓ on broker = the broker echoed it back. Radios hear it only if a gateway downlinks that channel |
 
 **Validation scope:** The earlier version's two-way TCP radio test is historical evidence only. These staged changes and their packaged app require a fresh Intel Mac/radio test. Node snapshots are not continuous presence checks; backups do not yet support restore.
 

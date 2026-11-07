@@ -45,7 +45,9 @@ def start_reader(stream=None):
 
 
 def snapshot(service):
+    mine = service.my_node() if hasattr(service, 'my_node') else None
     return {'type': 'snapshot', 'nodes': lookup_nodes(service.interface.nodes),
+            'me': f'!{mine:08x}' if isinstance(mine, int) else None,
             'channels': service.channels(), 'mqtt': service.mqtt.snapshot()}
 
 

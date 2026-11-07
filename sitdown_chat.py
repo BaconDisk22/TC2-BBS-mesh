@@ -16,8 +16,8 @@ from pathlib import Path
 BROADCAST = 0xFFFFFFFF
 MAX_TEXT = 500
 MAX_CHANNELS = 8
-STATUSES = ('sending', 'relayed', 'delivered', 'failed', 'unconfirmed')
-FINAL = ('relayed', 'delivered', 'failed')
+STATUSES = ('sending', 'relayed', 'delivered', 'posted', 'failed', 'unconfirmed')
+FINAL = ('relayed', 'delivered', 'posted', 'failed')
 PEER = re.compile(r'![0-9a-f]{8}')
 CONFIRM_TIMEOUT = 120
 
@@ -82,7 +82,7 @@ def status_label(event, now=None):
     status = event.get('status')
     if status == 'sending' and (now if now is not None else time.time()) - event['rx_time'] > CONFIRM_TIMEOUT:
         status = 'unconfirmed'
-    return {'sending': '… sending', 'relayed': '✓ relayed', 'delivered': '✓✓ delivered',
+    return {'sending': '… sending', 'relayed': '✓ relayed', 'delivered': '✓✓ delivered', 'posted': '✓ on broker',
             'unconfirmed': '? no confirmation',
             'failed': f"✗ not relayed ({event.get('reason') or 'no reply'})"}.get(status, '')
 
