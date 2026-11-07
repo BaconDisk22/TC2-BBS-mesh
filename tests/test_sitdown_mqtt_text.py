@@ -180,6 +180,7 @@ class DesktopTests(unittest.TestCase):
         a.chat_log, a.chat_views, a.chat_tabs, a.chat_tab_frames = ChatLog(), {}, None, {}
         a.chat_unread, a.nav_buttons, a.wire_views = desktop.Counter(), [], {}
         a.mesh_feed = MeshFeed()
+        a.mqtt_pending = {}
         result = MQTTMessagePipeline(keys={'centralnj': {'CentralNJ': KEY}}).process(
             'centralnj', envelope(data(1, b'from the broker')))
         a.dual_mqtt = Mock(drain_events=Mock(return_value=[('centralnj', result)]))

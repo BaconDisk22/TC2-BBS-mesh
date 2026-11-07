@@ -1,6 +1,6 @@
-"""Pure permission checks for a future operator-controlled MQTT sender.
+"""Pure permission checks for the operator-controlled MQTT sender (sitdown_mqtt_sender).
 
-This module does not implement MQTT publishing or radio transmission.
+This module does not publish anything itself.
 """
 from dataclasses import dataclass
 
@@ -24,4 +24,4 @@ def check_send_permission(config, network, *, demo=False, session_confirmed=Fals
         return SendDecision(False, 'Outbound MQTT publishing is disabled')
     if not session_confirmed:
         return SendDecision(False, 'Operator confirmation required this session')
-    return SendDecision(True, 'Policy permits a future sender; no publisher is implemented')
+    return SendDecision(True, 'Allowed')
