@@ -63,6 +63,20 @@ class CryptoTests(unittest.TestCase):
                     parse_channel_keys(bad)
         self.assertEqual(safe_channel_keys('X=zz'), {})
 
+    def test_bare_key_without_a_name_is_explained_without_showing_it(self):
+        bare = base64.b64encode(bytes(range(32))).decode()        # ends in '=' like real keys
+        for setting in (bare, f'LongFast=AQ==, {bare}', bare.rstrip('=')):
+            with self.subTest(setting=setting[:8]):
+                with self.assertRaises(ValueError) as caught:
+                    parse_channel_keys(setting)
+                message = str(caught.exception)
+                self.assertIn('channel name first', message)
+                self.assertNotIn(bare.rstrip('='), message)
+                self.assertNotIn(bare[:10], message)
+        with self.assertRaises(ValueError) as caught:
+            parse_channel_keys(f'LongFast=AQ==, {bare}')
+        self.assertTrue(str(caught.exception).startswith('Entry 2 '))
+
     def test_errors_never_echo_the_key(self):
         secret = base64.b64encode(bytes(range(8))).decode()
         with self.assertRaises(ValueError) as caught:
