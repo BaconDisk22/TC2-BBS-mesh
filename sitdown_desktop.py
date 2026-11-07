@@ -31,13 +31,25 @@ from sitdown_mqtt_crypto import safe_channel_keys
 from sitdown_mqtt_sender import MQTTSender, send_rooms
 from sitdown_version import VERSION
 from sitdown_personality import Personality
+from sitdown_ui import PALETTES, SPACE, UI, set_text
 import zipfile
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 DATA = Path.home() / ".sitdown-bbs"
 CONFIG = DATA / "launcher.json"
-THEME = {"background": "#030a0c", "panel": "#061013", "primary": "#ed001b",
-         "connected": "#19e333", "text": "#F5F5F0", "highlight": "#d3dde0"}
+THEME = {}
+
+
+def apply_theme_tokens(mode):
+    """Fill THEME with the palette for mode, plus the legacy key names older code still reads."""
+    palette = PALETTES.get(mode, PALETTES['dark'])
+    THEME.clear()
+    THEME.update(palette)
+    THEME.update(background=palette['bg'], panel=palette['surface'], primary=palette['accent'],
+                 connected=palette['success'], highlight=palette['muted'])
+
+
+apply_theme_tokens('dark')
 LOG_MIN_LINES = 8
 COMMANDS = [
     ("/sitdown", "Main menu"), ("/help", "Quick help"),
@@ -47,7 +59,100 @@ COMMANDS = [
     ("/node <ID or name>", "Who’s Who"), ("/weather", "Jersey Weather Desk"),
     ("/wire", "MQTT activity"), ("/announce <channel> <text>", "Admin broadcast"),
 ]
+# Sidebar groups: (group, ((page key, icon, label), ...)). Page keys are stable identifiers.
+NAV = (
+    ('Overview', (('HOME', '⌂', 'Dashboard'), ('RADIO', '◉', 'Radio'))),
+    ('Mesh', (('CHAT', '✆', 'Chat'), ('NODES', '◎', 'Nodes'), ('WIRE', '≋', 'Network'))),
+    ('BBS', (('MESSAGES', '✉', 'Mail'), ('BOARDS', '▤', 'Boards'), ('BBS', '⚑', 'Broadcast'))),
+    ('App', (('SETTINGS', '⚙', 'Settings'), ('ABOUT', 'ⓘ', 'About'))),
+)
+PAGE_INFO = {
+    'HOME': ('Dashboard', 'Server, radio and networks at a glance'),
+    'RADIO': ('Radio', 'Connection details and channels from your radio'),
+    'CHAT': ('Chat', 'Channel chat, direct messages and MQTT channels'),
+    'NODES': ('Nodes', 'Everyone your radio has heard'),
+    'WIRE': ('Network', 'MQTT broker links and packet activity'),
+    'MESSAGES': ('Mail', 'Private mail stored by your BBS'),
+    'BOARDS': ('Boards', 'Public bulletins on The Social Club'),
+    'BBS': ('Broadcast', 'Announcements, weather and radio commands'),
+    'SETTINGS': ('Settings', 'Server, networks and app preferences'),
+    'ABOUT': ('About', 'Version, credits and help'),
+}
+NETWORK_HELP = {
+    'topic': ('Topics to watch', 'Up to 4, comma-separated. Use msh/<region>/2/e/<channel>/+ to follow one channel '
+              'from every gateway, e.g. msh/US/2/e/CentralNJ/+.'),
+    'channel_keys': ('Channel keys', 'Lets the app read (and, if allowed, send) text on a channel. Format '
+                     'Name=key, comma-separated, e.g. LongFast=AQ==. Stored only on this Mac.'),
+}
 
+
+def network_fields(label, host):
+    return [
+        ('#', 'Connection', '', None),
+        ('enabled', f'Use {label}', 'bool', 'Turn this network on. Nothing connects until you also press Connect '
+         'or turn on auto-connect.'),
+        ('auto_connect', 'Connect when the app opens', 'bool', None),
+        ('host', 'Broker address', host, None),
+        ('port', 'Port', '8883', '8883 for TLS, 1883 without.'),
+        ('tls', 'Encrypt the connection (TLS)', 'bool_true', 'Leave on unless the broker only offers port 1883.'),
+        ('username', 'Username', '', None),
+        ('password', 'Password', '', 'Stored only in your local config file.'),
+        ('#', 'Channels', '', None),
+        ('topic', *NETWORK_HELP['topic'][:1], '', NETWORK_HELP['topic'][1]),
+        ('channel_keys', *NETWORK_HELP['channel_keys'][:1], '', NETWORK_HELP['channel_keys'][1]),
+        ('#', 'Sending', '', 'Off by default. When on, each keyed channel tab in Chat gets a Send box.'),
+        ('allow_publish', f'Allow sending to {label} from Chat', 'bool', 'You still confirm once per channel each session.'),
+        ('send_as', 'Send as node id', '', 'Leave blank to use your BBS radio\'s id.'),
+    ]
+
+
+# section: (tab title, [(key, label, default, help)]). key '#' starts a titled group.
+SETTINGS_SECTIONS = {
+    'startup': ('Startup', [
+        ('#', 'Startup announcement', '', 'Optionally say hello on a channel each time the server starts.'),
+        ('enabled', 'Announce when the server starts', 'bool', 'At most once per start, with a cooldown.'),
+        ('channel', 'Channel number', '0', '0–7, as numbered on your radio.'),
+        ('message', 'Message', '', 'Leave blank to use the greeting style from Personality. Up to 200 bytes.'),
+    ]),
+    'announcements': ('Admins', [
+        ('#', 'Remote administrators', '', 'Nodes allowed to send /announce over the radio.'),
+        ('admin_nodes', 'Admin node ids', '', 'Comma-separated, like !934cca70, !b2c649cb.'),
+    ]),
+    'weather': ('Weather', [
+        ('#', 'Weather desk', '', 'What /weather replies with.'),
+        ('internet_enabled', 'Use internet weather', 'bool', 'Fetches from Open-Meteo for the location below.'),
+        ('local_report', 'Offline report', '', 'Used when internet weather is off or unavailable. Include the time.'),
+        ('latitude', 'Latitude', '40.20', None),
+        ('longitude', 'Longitude', '-74.50', None),
+    ]),
+    'mqtt_centralnj': ('CentralNJ', network_fields('CentralNJ', 'mqtt.meshtastic.org')),
+    'mqtt_sjmesh': ('SJMesh', network_fields('SJMesh', 'mqtt.sjmesh.net')),
+    'personality': ('Personality', [
+        ('#', 'Public greeting', '', 'How the BBS talks to people over the radio.'),
+        ('public_mode', 'Public greeting style', 'clean', 'clean, attitude or uncensored.'),
+        ('allow_public_profanity', 'Allow profanity in public greetings', 'bool', None),
+    ]),
+    'mqtt_monitor': ('Advanced', [
+        ('#', 'BBS server MQTT counter', '', 'An older, server-side counter shown under Network. Most people can '
+         'leave it off and use the CentralNJ / SJMesh tabs instead.'),
+        ('enabled', 'Turn on the server counter', 'bool', None),
+        ('host', 'Broker address', '', None),
+        ('topic', 'Topic', '', 'One narrow topic. Broad topics like msh/US/# are refused.'),
+        ('tls', 'Encrypt the connection (TLS)', 'bool_true', None),
+        ('port', 'Port', '8883', None),
+        ('username', 'Username', '', None),
+        ('password', 'Password', '', None),
+    ]),
+}
+SETUP_GUIDE = (
+    "Setting up CentralNJ two-way through your radio:\n\n"
+    "1. Add the CentralNJ channel and its key on your Meshtastic radio.\n"
+    "2. Set the radio's MQTT broker to mqtt.meshtastic.org and enter the broker login on the radio.\n"
+    "3. Turn on MQTT uplink and downlink for the CentralNJ channel, and set the regional root topic.\n"
+    "4. Connect the radio to this app by USB or network and test with a short message.\n\n"
+    "The CentralNJ and SJMesh tabs in Settings are separate: they let this app watch (and, if you allow it, "
+    "send to) the broker directly. Keep topics narrow; avoid msh/US/# on limited hardware."
+)
 
 class SitdownApp:
     def __init__(self, root):
@@ -80,7 +185,7 @@ class SitdownApp:
         self.uptime = tk.StringVar(value='Uptime: 0s')
         self.radio_activity = tk.StringVar(value='Radio activity: Not observed')
         self.traffic = tk.StringVar(value='Messages observed: RX 0 / TX 0')
-        self.link_warning = tk.StringVar(value='Radio link: Unverified')
+        self.link_warning = tk.StringVar(value='Radio: not connected')
         self.centralnj_status = tk.StringVar(value=format_operator_status())
         self.centralnj_send_enabled = tk.BooleanVar(value=False)
         self.auto_start = tk.BooleanVar(value=False)
@@ -93,26 +198,25 @@ class SitdownApp:
         self.public_mouth = tk.StringVar(value="clean")
         self.public_profanity = tk.BooleanVar(value=False)
         self.status = tk.StringVar(value="Stopped")
+        self.mqtt_states = {name: tk.StringVar(value='Off') for name in NETWORK_LABELS}
+        self.mqtt_summary = tk.StringVar(value='MQTT: off')
+        self.appearance = tk.StringVar(value='dark')
+        self.text_size = tk.StringVar(value='default')
+        self.onboarded = False
+        self.current_page = 'HOME'
         self.colors = THEME
-        self.root.title("THE SITDOWN BBS | North Jersey Communications Division")
-        # Open taller when the screen allows it, so the server log is readable.
-        height = max(940, min(1100, self.root.winfo_screenheight() - 80))
-        self.root.geometry(f"1160x{height}")
-        self.root.minsize(960, 760)
-        self.root.configure(bg=THEME["background"])
-        style = ttk.Style(self.root)
-        style.theme_use('clam')
-        style.configure('TNotebook', background=THEME['background'], borderwidth=0)
-        style.configure('TNotebook.Tab', background=THEME['panel'], foreground=THEME['text'], padding=(15, 10))
-        style.map('TNotebook.Tab', background=[('selected', THEME['primary'])], foreground=[('selected', 'white')])
-        style.configure('Desk.TEntry', fieldbackground='#0B141A', foreground='white', insertcolor='white', padding=8)
-        style.configure('TCombobox', fieldbackground=THEME['background'], foreground=THEME['text'])
-        style.map('TCombobox', fieldbackground=[('readonly', THEME['background'])], foreground=[('readonly', THEME['text'])])
-        self.root.option_add('*Entry.highlightThickness', 1)
-        self.root.option_add('*Entry.highlightBackground', '#527079')
-        self.root.option_add('*Entry.relief', 'flat')
+        self.root.title("The Sitdown BBS")
+        height = max(760, min(960, self.root.winfo_screenheight() - 80))
+        self.root.geometry(f"1180x{height}")
+        self.root.minsize(960, 700)
         self.load()
+        apply_theme_tokens(self.appearance.get())
+        self.ui = UI(self.root, self.appearance.get(), self.text_size.get())
+        self.root.configure(bg=THEME['bg'])
         self.build()
+        self.bind_shortcuts()
+        self.appearance.trace_add('write', lambda *_: self.apply_appearance())
+        self.text_size.trace_add('write', lambda *_: self.apply_text_size())
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.after(250, self.poll)
         self.root.after(600, self.start_opted_in_mqtt)
@@ -135,14 +239,19 @@ class SitdownApp:
                 self.desktop_mouth.set(desktop_mode)
                 self.public_mouth.set(public_mode)
                 self.public_profanity.set(enabled)
+                if data.get("appearance") in PALETTES:
+                    self.appearance.set(data["appearance"])
+                if data.get("text_size") in ('small', 'default', 'large', 'larger'):
+                    self.text_size.set(data["text_size"])
+                self.onboarded = data.get("onboarded", True) is True
             except (ValueError, OSError):
                 pass
 
-    def save(self):
+    def save(self, quiet=False):
         try:
             Personality(self.desktop_mouth.get(), self.public_mouth.get(), self.public_profanity.get())
         except ValueError as exc:
-            messagebox.showerror("Invalid Jersey Mouth setting", str(exc))
+            self.show_info("Greeting style not saved", str(exc))
             return
         DATA.mkdir(parents=True, exist_ok=True)
         CONFIG.write_text(json.dumps({
@@ -150,221 +259,426 @@ class SitdownApp:
             "community": self.community.get(), "welcome": self.welcome.get(),
             "desktop_mouth": self.desktop_mouth.get(),
             "public_mouth": self.public_mouth.get(),
-            "public_profanity": self.public_profanity.get()
+            "public_profanity": self.public_profanity.get(),
+            "appearance": self.appearance.get(), "text_size": self.text_size.get(),
+            "onboarded": self.onboarded,
         }, indent=2), encoding="utf-8")
-        self.log("The Family Business: settings saved.")
+        if quiet:
+            return
+        self.log("Settings saved.")
         self.log(Personality(self.desktop_mouth.get(), self.public_mouth.get(), self.public_profanity.get()).message("welcome"))
 
     def build(self):
-        c = self.colors
-        def label(parent, text, size=11, color=None):
-            return tk.Label(parent, text=text, font=("Helvetica", size, "bold"),
-                            fg=color or c["text"], bg=c["background"])
-        button = self.styled_button
-        from PIL import Image
-        with Image.open(ROOT / 'assets' / 'jersey-banner.png') as banner_file:
-            self.banner_source = banner_file.convert('RGB')
-        self._banner_size = None
-        header = tk.Frame(self.root, bg=c['background'])
-        header.pack(fill='x', padx=12, pady=(8, 0))
-        self.banner = tk.Canvas(header, height=220, bg=c['background'], highlightthickness=0)
-        self.banner.pack(fill='x')
-        self.banner.bind('<Configure>', self.render_banner)
-        navigation = tk.Frame(self.root, bg=c["panel"], pady=7)
-        navigation.pack(fill="x", padx=12, pady=(2, 6))
-        self.navigation = navigation
+        """App shell: sidebar navigation, page header, page area and a status bar."""
+        ui, c = self.ui, THEME
+        self.shell = tk.Frame(self.root, bg=c['bg'])
+        self.shell.pack(fill='both', expand=True)
+        sidebar = tk.Frame(self.shell, bg=c['sidebar'], padx=SPACE['md'], pady=SPACE['lg'])
+        sidebar.pack(side='left', fill='y')
+        self.navigation = sidebar
+        self.build_brand(sidebar)
         self.nav_buttons = []
-        self._nav_columns = None
-        for title, action in [
-            ("⌂  HOME", self.show_home),
-            ("▣  BBS", self.commands),
-            ("✆  CHAT", lambda: self.select_page("CHAT")),
-            ("✉  MESSAGES", lambda: self.show_command_info("/mail")),
-            ("▤  BOARDS", lambda: self.show_command_info("/boards")),
-            ("◉  RADIO", self.show_radio),
-            ("◎  NODES", self.show_nodes),
-            ("⚙  SETTINGS", self.settings),
-            ("ⓘ  ABOUT", self.show_about),
-        ]:
-            action = lambda name=title.split()[-1]: self.select_page(name)
-            control = self.styled_button(
-                navigation, title, action,
-                c["primary"] if "HOME" in title else c["panel"],
-                compact=True)
-            # Labels can gain an unread count, so pages are matched by name, not label text.
-            control.page_name, control.base_text = title.split()[-1], title
-            self.nav_buttons.append(control)
-        navigation.bind("<Configure>", self.layout_navigation)
-        self.page_host = tk.Frame(self.root, bg=c['background'])
+        for group, items in NAV:
+            tk.Label(sidebar, text=group.upper(), font=ui.font('small'), fg=c['subtle'], bg=c['sidebar'],
+                     anchor='w').pack(fill='x', padx=SPACE['sm'], pady=(SPACE['lg'], SPACE['xs']))
+            for page, icon, text in items:
+                self.nav_buttons.append(self.nav_item(sidebar, page, icon, text))
+        tk.Label(sidebar, text=f'Version {VERSION}', font=ui.font('small'), fg=c['subtle'], bg=c['sidebar'],
+                 anchor='w').pack(side='bottom', fill='x', padx=SPACE['sm'])
+
+        main = tk.Frame(self.shell, bg=c['bg'])
+        main.pack(side='left', fill='both', expand=True)
+        top = tk.Frame(main, bg=c['bg'], padx=SPACE['xl'], pady=SPACE['lg'])
+        top.pack(fill='x')
+        heading = tk.Frame(top, bg=c['bg'])
+        heading.pack(side='left', fill='x', expand=True)
+        self.page_title = tk.StringVar(value='Dashboard')
+        self.page_subtitle = tk.StringVar(value=PAGE_INFO['HOME'][1])
+        tk.Label(heading, textvariable=self.page_title, font=ui.font('display'), fg=c['text'], bg=c['bg'],
+                 anchor='w').pack(fill='x')
+        tk.Label(heading, textvariable=self.page_subtitle, font=ui.font('small'), fg=c['muted'], bg=c['bg'],
+                 anchor='w').pack(fill='x')
+        server_area = tk.Frame(top, bg=c['bg'])
+        server_area.pack(side='right')
+        ui.pill(server_area, self.status, bg='bg', role='body').pack(side='left', padx=(0, SPACE['md']))
+        self.server_button = ui.button(server_area, 'Start server', self.toggle_server, 'primary', bg='bg')
+        self.server_button.pack(side='left')
+        self.status.trace_add('write', self.refresh_status_indicator)
+
+        status_bar = tk.Frame(main, bg=c['surface_alt'], padx=SPACE['xl'], pady=SPACE['xs'] + 2,
+                              highlightthickness=1, highlightbackground=c['border'])
+        status_bar.pack(side='bottom', fill='x')
+        for variable in (self.link_warning, self.mqtt_summary):
+            ui.pill(status_bar, variable, bg='surface_alt').pack(side='left', padx=(0, SPACE['xl']))
+        tk.Label(status_bar, textvariable=self.uptime, font=ui.font('small'), fg=c['muted'],
+                 bg=c['surface_alt']).pack(side='right')
+
+        self.page_host = tk.Frame(main, bg=c['bg'])
         self.page_host.pack(fill='both', expand=True)
         self.page_host.grid_rowconfigure(0, weight=1)
         self.page_host.grid_columnconfigure(0, weight=1)
-        self.home_page = tk.Frame(self.page_host, bg=c['background'])
-        self.home_page.grid(row=0, column=0, sticky='nsew')
-        # Cards and log share a draggable split; the log takes all extra height.
-        self.home_split = tk.PanedWindow(self.home_page, orient='vertical', bg=c['background'],
-                                         sashwidth=8, sashrelief='flat', bd=0, showhandle=False)
-        cards = tk.Frame(self.home_split, bg=c["background"])
-        for column in range(3):
-            cards.grid_columnconfigure(column, weight=1, uniform="jersey")
-
-        def card(column, title):
-            frame = tk.Frame(cards, bg=c["panel"], padx=10, pady=7,
-                             highlightbackground="#24404A", highlightthickness=1)
-            frame.grid(row=0, column=column, sticky="nsew", padx=5, pady=4)
-            tk.Label(frame, text=title, bg=c["panel"], fg=c["highlight"],
-                     font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(0, 5))
-            return frame
-
-        radio = card(0, "Connection Status")
-        tk.Label(radio, textvariable=self.radio_activity, bg=c['panel'], fg=c['connected'],
-                 font=('Helvetica', 11, 'bold'), wraplength=300, justify='left').pack(anchor='w', pady=(0, 8))
-        transport = tk.Frame(radio, bg=c['panel']); transport.pack(fill='x')
-        for title, value in (('USB / Serial', 'serial'), ('TCP / Network', 'tcp')):
-            tk.Radiobutton(transport, text=title, variable=self.connection, value=value,
-                           bg=c['panel'], fg=c['text'], selectcolor='#17262b').pack(side='left')
-        tk.Label(radio, text="Device path or radio IP", bg=c["panel"], fg=c["text"]).pack(anchor="w", pady=(10, 2))
-        ttk.Entry(radio, textvariable=self.address, style='Desk.TEntry').pack(fill='x')
-        radio_actions = tk.Frame(radio, bg=c['panel'])
-        radio_actions.pack(fill='x', pady=(8, 0))
-        self.styled_button(radio_actions, "Find USB Ports", self.list_ports, "#233139",
-                           compact=True).pack(side='left', expand=True, fill='x', padx=(0, 3))
-        self.styled_button(radio_actions, "Check Radio Connection", self.check_radio_connection,
-                           "#233139", compact=True).pack(side='left', expand=True, fill='x', padx=(3, 0))
-        tk.Label(radio, text="TCP checks briefly use a client slot. Close other radio clients first.",
-                 bg=c['panel'], fg=c['highlight'], wraplength=275,
-                 justify='left').pack(anchor='w', pady=(4, 0))
-        self.connection_summary = tk.StringVar()
-        tk.Label(radio, textvariable=self.connection_summary, bg=c["panel"],
-                 fg=c["text"], justify="left", wraplength=280).pack(anchor="w", pady=(8, 0))
-        self.connection.trace_add("write", self.refresh_connection_summary)
-        self.address.trace_add("write", self.refresh_connection_summary)
-        self.refresh_connection_summary()
-        tk.Label(radio, text="Process status does not confirm a radio link.",
-                 bg=c["panel"], fg=c["highlight"], wraplength=275,
-                 justify="left").pack(anchor="w", pady=(10, 0))
-
-        tk.Label(radio, textvariable=self.link_warning, bg=c['panel'], fg=c['highlight'], wraplength=280).pack(anchor='w', pady=3)
-        tk.Label(radio, textvariable=self.centralnj_status, bg=c['panel'], fg=c['highlight'],
-                 justify='left', wraplength=280).pack(anchor='w', pady=3)
-        self.styled_button(radio, 'Disconnect', self.stop, c['primary']).pack(fill='x', pady=(10, 0))
-
-        server = card(1, "BBS Server")
-        self.status_row = tk.Frame(server, bg=c["panel"])
-        self.status_row.pack(fill="x", pady=(0, 8))
-        self.status_dot = tk.Label(self.status_row, text="●", bg=c["panel"],
-                                   fg=c["primary"], font=("Helvetica", 16, "bold"))
-        self.status_dot.pack(side="left", padx=(0, 6))
-        tk.Label(self.status_row, textvariable=self.status, bg=c["panel"],
-                 fg=c["text"], wraplength=230, justify="left").pack(side="left")
-        self.status.trace_add("write", self.refresh_status_indicator)
+        self.build_home()
         self.refresh_status_indicator()
-        self.styled_button(server, 'Start BBS Server', self.start, '#233139').pack(fill='x', pady=3)
-        self.toggle_row(server, 'Auto start at launch', self.auto_start)
-        self.toggle_row(server, 'Recover after crash / disconnect', self.auto_restart)
-        self.toggle_row(server, 'Demo — no radio', self.demo)
-        self.styled_button(server, '↻  Restart Server', self.restart, '#233139').pack(fill='x', pady=(10, 3))
-        self.styled_button(server, '■  Stop Server', self.stop, c['primary']).pack(fill='x', pady=3)
-        tk.Label(server, text='Process status is separate from radio RX.', bg=c['panel'], fg='#a6b4b8',
-                 wraplength=280, justify='left').pack(anchor='w', pady=8)
-        for variable in (self.node_count, self.uptime, self.traffic):
-            tk.Label(server, textvariable=variable, bg=c['panel'], fg=c['text']).pack(anchor='w', pady=2)
+        self.select_page('HOME')
 
-        personality = card(2, "Jersey Personality • Attitude Adjustah")
-        tk.Label(personality, text='Desktop greeting style', bg=c['panel'], fg='#a6b4b8').pack(anchor='w', pady=5)
-        choices = tk.Frame(personality, bg=c['panel']); choices.pack(fill='x')
-        for title, mode in (('CLEAN', 'clean'), ('JERSEY', 'attitude'), ('HEAVY', 'uncensored')):
-            control = self.styled_button(choices, title, lambda m=mode: self.desktop_mouth.set(m), '#233139', compact=True)
-            control.pack(side='left', expand=True, fill='x', padx=2)
-            def selected(*_, button=control, value=mode):
-                button.configure(bg=c['primary'] if self.desktop_mouth.get() == value else '#233139')
-            self.desktop_mouth.trace_add('write', selected); selected()
-        self.greeting_preview = tk.StringVar()
-        def preview(*_):
-            self.greeting_preview.set(Personality(self.desktop_mouth.get()).message('welcome'))
-        self.desktop_mouth.trace_add('write', preview); preview()
-        tk.Label(personality, text='Preview', bg=c['panel'], fg=c['text']).pack(anchor='w', pady=(12, 4))
-        tk.Label(personality, textvariable=self.greeting_preview, font=('Menlo', 11), bg='#020b0d', fg=c['text'],
-                 wraplength=275, justify='left', anchor='nw', height=4, padx=8, pady=8,
-                 highlightbackground='#1e3035', highlightthickness=1).pack(fill='x')
-        self.styled_button(personality, 'Save Settings', self.save, '#233139').pack(fill='x', pady=(10, 3))
-        self.styled_button(personality, 'Public Broadcast Settings', self.settings, '#233139').pack(fill='x', pady=3)
-        log_section = tk.Frame(self.home_split, bg=c['background'])
-        log_header = tk.Frame(log_section, bg=c["panel"], padx=12, pady=9,
-                              highlightbackground="#24404A", highlightthickness=1)
-        log_header.pack(fill="x", padx=20, pady=(6, 0))
-        label(log_header, '▤  Server Log', 12, c['text']).pack(side='left')
+    def build_brand(self, parent):
+        c, ui = THEME, self.ui
+        brand = tk.Frame(parent, bg=c['sidebar'], padx=SPACE['sm'])
+        brand.pack(fill='x')
+        tk.Label(brand, text='THE', font=ui.font('small'), fg=c['muted'], bg=c['sidebar'], anchor='w').pack(fill='x')
+        word = tk.Frame(brand, bg=c['sidebar'])
+        word.pack(fill='x')
+        for text, colour in (('SIT', 'brand_green'), ('DOWN', 'brand_white'), (' BBS', 'brand_red')):
+            tk.Label(word, text=text, font=ui.font('title'), fg=c[colour], bg=c['sidebar']).pack(side='left')
+        tk.Label(brand, text='North Jersey Communications', font=ui.font('small'), fg=c['subtle'],
+                 bg=c['sidebar'], anchor='w').pack(fill='x')
+
+    def nav_item(self, parent, page, icon, text):
+        c = THEME
+        control = tk.Label(parent, text=f'{icon}   {text}', font=self.ui.font('nav'), fg=c['muted'], bg=c['sidebar'],
+                           anchor='w', padx=SPACE['md'], pady=SPACE['sm'] - 1, cursor='hand2', takefocus=True,
+                           highlightthickness=2, highlightbackground=c['sidebar'], highlightcolor=c['focus'])
+        control.pack(fill='x', pady=1)
+        control.page_name, control.base_text = page, f'{icon}   {text}'
+        go = lambda _e=None: (self.select_page(page), 'break')[1]
+        for event in ('<Button-1>', '<Return>', '<space>'):
+            control.bind(event, go)
+        control.bind('<Enter>', lambda _e: control.configure(fg=c['text']))
+        control.bind('<Leave>', lambda _e: control.configure(
+            fg=c['text'] if self.current_page == page else c['muted']))
+        control.bind('<FocusIn>', lambda _e: control.configure(highlightbackground=c['focus']))
+        control.bind('<FocusOut>', lambda _e: control.configure(highlightbackground=control.cget('bg')))
+        return control
+
+    def bind_shortcuts(self):
+        """⌘1–⌘9 jump between pages, ⌘, opens Settings and ⌘F searches the activity log."""
+        modifier = 'Command' if sys.platform == 'darwin' else 'Control'
+        order = [page for _group, items in NAV for page, _icon, _text in items]
+        for number, page in enumerate(order[:9], start=1):
+            self.root.bind_all(f'<{modifier}-Key-{number}>', lambda _e, p=page: self.select_page(p))
+        self.root.bind_all(f'<{modifier}-comma>', lambda _e: self.select_page('SETTINGS'))
+        self.root.bind_all(f'<{modifier}-f>', lambda _e: self.focus_log_search())
+
+    def focus_log_search(self):
+        self.select_page('HOME')
+        if getattr(self, 'log_search', None) is not None and self.log_search.winfo_exists():
+            self.log_search.focus_set()
+
+    def apply_appearance(self):
+        """Switch dark/light by rebuilding the window; state, log text and the open page are kept."""
+        mode = self.appearance.get()
+        if mode not in PALETTES or mode == self.ui.mode:
+            return
+        log_text = self.output.get('1.0', 'end-1c')
+        page = self.current_page
+        window = getattr(self, '_expanded_log_window', None)
+        if window is not None and window.winfo_exists():
+            window.destroy()
+        if self.active_page is not None:
+            self.active_page.destroy()
+            self.active_page = None
+        self.shell.destroy()
+        apply_theme_tokens(mode)
+        self.ui = UI(self.root, mode, self.text_size.get())
+        self.root.configure(bg=THEME['bg'])
+        self.chat_tabs, self.chat_views, self.chat_tab_frames, self.wire_views = None, {}, {}, {}
+        self.build()
+        self.output.configure(state='normal')
+        self.output.delete('1.0', 'end')
+        self.output.insert('1.0', log_text + '\n')
+        self.output.configure(state='disabled')
+        self.output.see('end')
+        self.select_page(page)
+        self.save(quiet=True)
+
+    def apply_text_size(self):
+        self.ui.apply_text_size(self.text_size.get())
+        self.save(quiet=True)
+
+    # ------------------------------------------------------------------ home
+
+    def build_home(self):
+        ui, c = self.ui, THEME
+        self.home_page = tk.Frame(self.page_host, bg=c['bg'])
+        self.home_page.grid(row=0, column=0, sticky='nsew')
+        self.home_split = tk.PanedWindow(self.home_page, orient='vertical', bg=c['bg'], sashwidth=SPACE['sm'],
+                                         sashrelief='flat', bd=0, showhandle=False)
+        top = tk.Frame(self.home_split, bg=c['bg'], padx=SPACE['xl'])
+        if not self.onboarded:
+            self.build_onboarding(top)
+        cards = tk.Frame(top, bg=c['bg'])
+        cards.pack(fill='both', expand=True)
+        for column in range(3):
+            cards.grid_columnconfigure(column, weight=1, uniform='home')
+
+        server_card, body = ui.card(cards, 'BBS server', 'Runs the bulletin board on your radio.')
+        server_card.grid(row=0, column=0, sticky='nsew', padx=(0, SPACE['sm']))
+        ui.pill(body, self.status, role='heading').pack(fill='x')
+        for variable in (self.uptime, self.node_count, self.traffic):
+            tk.Label(body, textvariable=variable, font=ui.font('small'), fg=c['muted'], bg=c['surface'],
+                     anchor='w').pack(fill='x')
+        actions = tk.Frame(body, bg=c['surface'])
+        actions.pack(fill='x', pady=(SPACE['md'], SPACE['sm']))
+        ui.button(actions, 'Start', self.start, 'primary', small=True).pack(side='left')
+        ui.button(actions, 'Restart', self.restart, small=True).pack(side='left', padx=SPACE['xs'])
+        ui.button(actions, 'Stop', self.confirm_stop, 'danger', small=True).pack(side='left')
+        ui.toggle(body, 'Start when the app opens', self.auto_start)
+        ui.toggle(body, 'Restart after a crash', self.auto_restart)
+        ui.toggle(body, 'Demo mode (sample data, sends nothing)', self.demo)
+
+        radio, body = ui.card(cards, 'Radio connection', 'How this computer reaches your Meshtastic radio.')
+        radio.grid(row=0, column=1, sticky='nsew', padx=SPACE['sm'])
+        ui.segmented(body, self.connection, (('USB cable', 'serial'), ('Network (Wi-Fi)', 'tcp'))).pack(fill='x')
+        self.address_label = tk.StringVar()
+        tk.Label(body, textvariable=self.address_label, font=ui.font('small'), fg=c['muted'], bg=c['surface'],
+                 anchor='w').pack(fill='x', pady=(SPACE['md'], 2))
+        ui.entry(body, self.address).pack(fill='x')
+        buttons = tk.Frame(body, bg=c['surface'])
+        buttons.pack(fill='x', pady=(SPACE['sm'], 0))
+        ui.button(buttons, 'Find USB Ports', self.list_ports, small=True).pack(side='left')
+        ui.button(buttons, 'Check Radio Connection', self.check_radio_connection, small=True).pack(
+            side='left', padx=SPACE['xs'])
+        self.connection_summary = tk.StringVar()
+        ui.pill(body, self.link_warning).pack(fill='x', pady=(SPACE['md'], 0))
+        tk.Label(body, textvariable=self.radio_activity, font=ui.font('small'), fg=c['muted'], bg=c['surface'],
+                 anchor='w', justify='left', wraplength=300).pack(fill='x')
+        ui.notice(body, 'A network check briefly uses the radio\'s single app connection. '
+                  'Close other Meshtastic apps first.', wrap=280).pack(fill='x', pady=(SPACE['sm'], 0))
+        for variable in (self.connection, self.address):
+            variable.trace_add('write', self.refresh_connection_summary)
+        self.refresh_connection_summary()
+
+        networks, body = ui.card(cards, 'MQTT networks', 'Optional internet links to CentralNJ and SJMesh.')
+        networks.grid(row=0, column=2, sticky='nsew', padx=(SPACE['sm'], 0))
+        for network, label in NETWORK_LABELS.items():
+            row = tk.Frame(body, bg=c['surface'])
+            row.pack(fill='x', pady=(0, SPACE['sm']))
+            tk.Label(row, text=label, font=ui.font('body'), fg=c['text'], bg=c['surface'], anchor='w').pack(fill='x')
+            ui.pill(row, self.mqtt_states[network]).pack(fill='x')
+            line = tk.Frame(row, bg=c['surface'])
+            line.pack(fill='x', pady=(SPACE['xs'], 0))
+            ui.button(line, 'Connect', lambda n=network: self.mqtt_network_action(n, True), small=True).pack(side='left')
+            ui.button(line, 'Disconnect', lambda n=network: self.mqtt_network_action(n, False), 'ghost',
+                      small=True).pack(side='left', padx=SPACE['xs'])
+        ui.button(body, 'View network activity', lambda: self.select_page('WIRE'), 'ghost',
+                  small=True).pack(anchor='w', pady=(SPACE['sm'], 0))
+
+        log_section = tk.Frame(self.home_split, bg=c['bg'], padx=SPACE['xl'], pady=SPACE['md'])
+        log_card, log_body = ui.card(log_section)
+        log_card.pack(fill='both', expand=True)
+        log_header = tk.Frame(log_body, bg=c['surface'])
+        log_header.pack(fill='x', pady=(0, SPACE['sm']))
+        ui.label(log_header, 'Activity log', 'heading', bg='surface').pack(side='left')
+        for text, command in (('Clear', self.clear_log), ('Save…', self.export_log), ('Expand', self.expand_log)):
+            ui.button(log_header, text, command, 'ghost', small=True).pack(side='right', padx=(SPACE['xs'], 0))
         self.log_query = tk.StringVar()
-        self.styled_button(log_header, 'Expand Log', self.expand_log, '#233139', compact=True).pack(side='left', padx=(12, 3))
-        for title, action in (('Clear Log', self.clear_log), ('Save Log', self.export_log), ('Find', self.find_log)):
-            self.styled_button(log_header, title, action, '#233139', compact=True).pack(side='right', padx=3)
-        ttk.Entry(log_header, textvariable=self.log_query, width=20, style='Desk.TEntry').pack(side='right', padx=5)
+        ui.button(log_header, 'Find', self.find_log, small=True).pack(side='right', padx=(SPACE['xs'], SPACE['sm']))
+        self.log_search = ui.entry(log_header, self.log_query, width=22)
+        self.log_search.pack(side='right')
+        self.log_search.bind('<Return>', lambda _e: self.find_log())
+        self.output = tk.Text(log_body, bg=c['log_bg'], fg=c['log_text'], insertbackground=c['text'], wrap='word',
+                              relief='flat', bd=0, state='disabled', height=12, font=ui.font('mono'),
+                              padx=SPACE['md'], pady=SPACE['sm'], highlightthickness=1,
+                              highlightbackground=c['border'], selectbackground=c['selection'])
+        scroll = ttk.Scrollbar(log_body, command=self.output.yview)
+        scroll.pack(side='right', fill='y')
+        self.output.configure(yscrollcommand=scroll.set)
+        self.output.pack(fill='both', expand=True)
+        self.output.tag_configure('event_error', foreground=c['danger'])
+        self.output.tag_configure('event_ready', foreground=c['success'])
 
-        # Read-only footer: process status is not proof of a live radio link.
-        footer = tk.Frame(self.home_page, bg=c["panel"], padx=14, pady=7,
-                          highlightbackground="#24404A", highlightthickness=1)
-        footer.pack(side="bottom", fill="x", padx=20, pady=(0, 6))
-        tk.Label(footer, text="THE SITDOWN BBS  •  NORTH JERSEY",
-                 bg=c["panel"], fg=c["highlight"],
-                 font=("Helvetica", 12, "bold")).pack(side="left")
-        self.styled_button(footer, 'The Books', self.backup, '#233139', compact=False).pack(side='left', padx=8)
-        self.styled_button(footer, 'Verify Backup', self.verify_backup, '#233139', compact=False).pack(side='left', padx=4)
-        self.styled_button(footer, 'Diagnostics', self.copy_diagnostics, '#233139', compact=False).pack(side='left')
-        tk.Label(footer, textvariable=self.status, bg=c["panel"], fg=c["text"],
-                 font=("Helvetica", 12)).pack(side="right", padx=(14, 0))
-        tk.Label(footer, text="SERVER PROCESS:", bg=c["panel"], fg=c["highlight"],
-                 font=("Helvetica", 12, "bold")).pack(side="right")
-        self.output = tk.Text(log_section, bg="#01090b", fg="#42ed50", insertbackground=c["text"],
-                              wrap="word", relief="flat", state="disabled", height=12,
-                              font=("Menlo", 14), padx=16, pady=12,
-                              highlightbackground="#24404A", highlightthickness=1)
-        self.output.pack(fill="both", expand=True, padx=20, pady=(5, 5))
         self.home_split.pack(fill='both', expand=True)
-        cards.update_idletasks()
+        top.update_idletasks()
         linespace = self.output.tk.call('font', 'metrics', self.output.cget('font'), '-linespace')
-        self.home_split.add(cards, minsize=120, stretch='never')
+        self.home_split.add(top, minsize=120, stretch='never')
         self.home_split.add(log_section, stretch='always',
-                            minsize=log_header.winfo_reqheight() + LOG_MIN_LINES * int(linespace) + 20)
-        self.output.tag_configure("event_error", foreground="#FF8B85")
-        self.output.tag_configure("event_ready", foreground="#27ff3d")
-        self.log(Personality(self.desktop_mouth.get(), self.public_mouth.get(), self.public_profanity.get()).message("welcome"))
-        self.log(f"The Sitdown BBS {VERSION}")
-        self.log("Pick a radio, or check Demo mode.")
+                            minsize=log_header.winfo_reqheight() + LOG_MIN_LINES * int(linespace) + 60)
+        if not getattr(self, '_greeted', False):
+            self._greeted = True
+            self.log(Personality(self.desktop_mouth.get(), self.public_mouth.get(),
+                                 self.public_profanity.get()).message('welcome'))
+            self.log(f'The Sitdown BBS {VERSION}')
+            self.log('Pick a radio connection and press Start, or turn on Demo mode to look around.')
+
+    def build_onboarding(self, parent):
+        """A one-line first-run guide; dismissed for good with one click."""
+        ui, c = self.ui, THEME
+        card = tk.Frame(parent, bg=c['surface'], highlightthickness=1, highlightbackground=c['info'],
+                        padx=SPACE['lg'], pady=SPACE['sm'])
+        card.pack(fill='x', pady=(0, SPACE['md']))
+        ui.label(card, 'New here?', 'heading', bg='surface').pack(side='left')
+        ui.label(card, '  Choose how your radio connects, press Check Radio Connection, then Start.', 'body', 'muted',
+                 bg='surface').pack(side='left')
+
+        def demo():
+            self.demo.set(True)
+            self.start()
+
+        def dismiss():
+            self.onboarded = True
+            self.save(quiet=True)
+            card.destroy()
+        ui.button(card, 'Dismiss', dismiss, 'ghost', small=True).pack(side='right')
+        ui.button(card, 'Try demo mode', demo, small=True).pack(side='right', padx=SPACE['xs'])
+
+    def surface_key(self, widget):
+        colour = str(widget.cget('bg'))
+        return next((key for key in ('surface', 'bg', 'surface_alt', 'sidebar') if THEME.get(key) == colour), 'surface')
+
+    def toggle_server(self):
+        if self.supervisor and self.supervisor.running or str(self.status.get()).startswith('Demo running'):
+            self.confirm_stop()
+        else:
+            self.start()
+
+    def confirm_stop(self):
+        """Stopping a live BBS ends every radio session, so ask first; demo and idle stop at once."""
+        live = bool(self.supervisor and self.supervisor.running and not self.demo.get())
+        if live and not messagebox.askyesno('Stop the BBS server?',
+                                            'People using your BBS over the radio will stop getting replies '
+                                            'until you start it again.', parent=self.root):
+            return
+        self.stop()
+
+    def toolbar(self, page):
+        bar = tk.Frame(page, bg=THEME['bg'])
+        bar.pack(fill='x', pady=(0, SPACE['sm']))
+        return bar
+
+    # ------------------------------------------------------------------ pages
+
+    def copy_text(self, value, note):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(value)
+        self.log(note + ' ' + value)
+
+    def wire_page(self, page):
+        """MQTT network activity: broker status and controls, then per-network packet feeds."""
+        ui, c = self.ui, THEME
+        card, body = ui.card(page, 'Brokers', 'MQTT links are separate from your radio. Packets here are never '
+                             'forwarded to the radio.', actions=[('Show details', self.mqtt_network_status, 'ghost')])
+        card.pack(fill='x', pady=(0, SPACE['md']))
+        row = tk.Frame(body, bg=c['surface'])
+        row.pack(fill='x')
+        for network, label in NETWORK_LABELS.items():
+            cell = tk.Frame(row, bg=c['surface'])
+            cell.pack(side='left', fill='x', expand=True)
+            tk.Label(cell, text=label, font=ui.font('body'), fg=c['text'], bg=c['surface'], anchor='w').pack(fill='x')
+            ui.pill(cell, self.mqtt_states[network]).pack(fill='x')
+            line = tk.Frame(cell, bg=c['surface'])
+            line.pack(fill='x', pady=(SPACE['xs'], 0))
+            ui.button(line, 'Connect', lambda n=network: self.mqtt_network_action(n, True), small=True).pack(side='left')
+            ui.button(line, 'Disconnect', lambda n=network: self.mqtt_network_action(n, False), 'ghost',
+                      small=True).pack(side='left', padx=SPACE['xs'])
+        wire_tabs = ttk.Notebook(page)
+        wire_tabs.pack(fill='both', expand=True)
+        self.wire_views = {}
+        for network, label in NETWORK_LABELS.items():
+            frame = tk.Frame(wire_tabs, bg=c['surface'], padx=SPACE['md'], pady=SPACE['md'])
+            wire_tabs.add(frame, text=label)
+            self.wire_views[network] = self.page_text(frame, self.render_wire(network))
+        counts = tk.Frame(wire_tabs, bg=c['surface'], padx=SPACE['md'], pady=SPACE['md'])
+        wire_tabs.add(counts, text='BBS server counter')
+        data = self.snapshot['mqtt']
+        self.page_text(counts, f"Status: {data['status']}\nMessages this server session: {data['total']}\n\n"
+                       + '\n'.join(f'{count}  {topic}' for topic, count in data['topics'])
+                       + '\n\nThis older counter runs inside the BBS server (Settings → Advanced). '
+                       'It excludes retained messages and is not proof of radio reception.')
+
+    def radio_page(self, page):
+        ui, c = self.ui, THEME
+        cards = tk.Frame(page, bg=c['bg'])
+        cards.pack(fill='both', expand=True)
+        cards.grid_columnconfigure(0, weight=1, uniform='radio')
+        cards.grid_columnconfigure(1, weight=1, uniform='radio')
+        status, body = ui.card(cards, 'Connection', 'What the app knows about your radio right now.',
+                               actions=[('Change on Dashboard', lambda: self.select_page('HOME'), 'ghost')])
+        status.grid(row=0, column=0, sticky='nsew', padx=(0, SPACE['sm']))
+        ui.pill(body, self.status, role='heading').pack(fill='x')
+        ui.pill(body, self.link_warning).pack(fill='x', pady=(SPACE['sm'], 0))
+        for variable in (self.connection_summary, self.radio_activity, self.node_count, self.uptime):
+            tk.Label(body, textvariable=variable, font=ui.font('body'), fg=c['muted'], bg=c['surface'], anchor='w',
+                     justify='left').pack(fill='x', pady=(SPACE['xs'], 0))
+        tk.Label(body, textvariable=self.centralnj_status, font=ui.font('small'), fg=c['muted'], bg=c['surface'],
+                 justify='left', anchor='w').pack(fill='x', pady=(SPACE['md'], 0))
+        ui.notice(body, 'A running server does not prove a continuous radio link. Radio activity shows the last '
+                  'time a packet was heard.', wrap=380).pack(fill='x', pady=(SPACE['md'], 0))
+        channels, body = ui.card(cards, 'Channels', 'Read from the radio when the BBS server starts.')
+        channels.grid(row=0, column=1, sticky='nsew', padx=(SPACE['sm'], 0))
+        rows = [ch for ch in self.snapshot.get('channels') or [] if isinstance(ch, dict)]
+        if not rows:
+            ui.empty_state(body, 'No channels loaded', 'Start the BBS server to read the channel list from your radio.',
+                           ('Start server', self.start)).pack(fill='x')
+        for ch in rows:
+            line = tk.Frame(body, bg=c['surface'])
+            line.pack(fill='x', pady=2)
+            tk.Label(line, text=str(ch.get('index')), font=ui.font('mono'), fg=c['muted'], bg=c['surface'], width=3,
+                     anchor='w').pack(side='left')
+            tk.Label(line, text=str(ch.get('name')), font=ui.font('body'), fg=c['text'], bg=c['surface'],
+                     anchor='w').pack(side='left')
+
+    def about_page(self, page):
+        ui, c = self.ui, THEME
+        card, body = ui.card(page)
+        card.pack(fill='x')
+        word = tk.Frame(body, bg=c['surface'])
+        word.pack(anchor='w')
+        for text, colour in (('THE ', 'muted'), ('SIT', 'brand_green'), ('DOWN', 'brand_white'), (' BBS', 'brand_red')):
+            tk.Label(word, text=text, font=ui.font('display'), fg=c[colour], bg=c['surface']).pack(side='left')
+        ui.label(body, f'Version {VERSION}  ·  North Jersey Communications Division', 'small', 'muted',
+                 bg='surface').pack(fill='x')
+        ui.label(body, 'A Jersey-flavoured Meshtastic bulletin board: mail, boards, chat and announcements for '
+                 'people on your mesh, run from this computer through your radio.', 'body', bg='surface',
+                 wrap=720).pack(fill='x', pady=(SPACE['md'], 0))
+        ui.section(body, 'Credits')
+        ui.label(body, 'Based on TC²-BBS by TheCommsChannel (github.com/TheCommsChannel/TC2-BBS-mesh). '
+                 'Licensed GPL-3.0. Weather by Open-Meteo, only when you turn it on.', 'small', 'muted',
+                 bg='surface', wrap=720).pack(fill='x')
+        ui.section(body, 'Good to know')
+        for line in ('MQTT activity is separate from what your radio hears.',
+                     'Demo mode and build checks do not prove a radio will work; test with real hardware.',
+                     'Backups can contain messages and keys. Keep them private.'):
+            ui.notice(body, line, wrap=700).pack(fill='x', pady=1)
+        actions = tk.Frame(body, bg=c['surface'])
+        actions.pack(fill='x', pady=(SPACE['md'], 0))
+        ui.button(actions, 'Copy diagnostics', self.copy_diagnostics, small=True).pack(side='left')
+        ui.button(actions, 'Keyboard shortcuts', self.show_shortcuts, 'ghost', small=True).pack(side='left',
+                                                                                              padx=SPACE['xs'])
+
+    def show_shortcuts(self):
+        key = '⌘' if sys.platform == 'darwin' else 'Ctrl+'
+        order = [text for _group, items in NAV for _page, _icon, text in items][:9]
+        self.show_info('Keyboard shortcuts', '\n'.join(f'{key}{n}   {text}' for n, text in enumerate(order, 1))
+                       + f'\n{key},   Settings\n{key}F   Search the activity log\n'
+                       'Tab moves between controls; Space or Return presses the focused one.')
+
+    def greeting_settings(self, frame):
+        ui, c = self.ui, THEME
+        ui.section(frame, 'Desktop greeting')
+        ui.label(frame, 'How the app greets you in the activity log.', 'small', 'muted', bg='surface').pack(fill='x')
+        ui.segmented(frame, self.desktop_mouth, (('Clean', 'clean'), ('Jersey', 'attitude'),
+                                                 ('Heavy', 'uncensored'))).pack(anchor='w', pady=(SPACE['xs'], 0))
+        preview = tk.StringVar()
+
+        def refresh(*_):
+            preview.set(Personality(self.desktop_mouth.get()).message('welcome'))
+        self.desktop_mouth.trace_add('write', refresh)
+        refresh()
+        tk.Label(frame, textvariable=preview, font=ui.font('mono'), fg=c['text'], bg=c['field'], wraplength=560,
+                 justify='left', anchor='nw', padx=SPACE['md'], pady=SPACE['sm'], highlightthickness=1,
+                 highlightbackground=c['border']).pack(fill='x', pady=(SPACE['sm'], 0))
+        ui.button(frame, 'Save greeting style', self.save, small=True).pack(anchor='w', pady=(SPACE['sm'], 0))
+        self.greeting_preview = preview
 
     def update_centralnj_status(self, radio_state='unverified', mqtt_state='disabled'):
         """Update read-only operator status without claiming delivery."""
-        self.centralnj_status.set(format_operator_status(radio_state, mqtt_state))
-
-    def render_banner(self, event):
-        """Avoid costly resampling for duplicate Configure events."""
-        from PIL import Image, ImageTk
-        size = (max(1, event.width), max(1, event.height))
-        if size == self._banner_size:
-            return
-        self.banner_photo = ImageTk.PhotoImage(
-            self.banner_source.resize(size, Image.Resampling.LANCZOS))
-        self._banner_size = size
-        self.banner.delete('all')
-        self.banner.create_image(0, 0, anchor='nw', image=self.banner_photo)
+        text = format_operator_status(radio_state, mqtt_state)
+        if self.centralnj_status.get() != text:
+            self.centralnj_status.set(text)
 
     def toggle_row(self, parent, title, variable):
-        row = tk.Frame(parent, bg=self.colors['panel']); row.pack(fill='x', pady=6)
-        tk.Label(row, text=title, bg=self.colors['panel'], fg=self.colors['text']).pack(side='left')
-        toggle = tk.Canvas(row, width=44, height=24, bg=self.colors['panel'], highlightthickness=0, takefocus=True, cursor='hand2')
-        toggle.pack(side='right')
-        def draw(*_):
-            toggle.delete('all')
-            color = '#16cb37' if variable.get() else '#34464d'
-            toggle.create_oval(1, 2, 22, 23, fill=color, outline=color)
-            toggle.create_oval(22, 2, 43, 23, fill=color, outline=color)
-            toggle.create_rectangle(11, 2, 33, 23, fill=color, outline=color)
-            x = 23 if variable.get() else 3
-            toggle.create_oval(x, 4, x+17, 21, fill='white', outline='white')
-        def change(_=None): variable.set(not variable.get())
-        for event in ('<Button-1>', '<space>', '<Return>'): toggle.bind(event, change)
-        toggle.bind('<FocusIn>', lambda _: toggle.configure(highlightthickness=1, highlightbackground='#ffffff'))
-        toggle.bind('<FocusOut>', lambda _: toggle.configure(highlightthickness=0))
-        variable.trace_add('write', draw); draw()
+        """Compatibility wrapper: a design-system switch on a surface."""
+        return self.ui.toggle(parent, title, variable, bg=self.surface_key(parent))
 
     def config_path(self):
         return (DATA if getattr(sys, 'frozen', False) else ROOT) / 'config.ini'
@@ -388,8 +702,15 @@ class SitdownApp:
             self.show_info('The Sitdown', str(exc))
 
     def select_page(self, title):
+        self.current_page = title
         for button in self.nav_buttons:
-            button.configure(bg=self.colors['primary'] if button.page_name == title else self.colors['background'])
+            chosen = button.page_name == title
+            button.configure(bg=THEME['raised'] if chosen else THEME['sidebar'],
+                             fg=THEME['text'] if chosen else THEME['muted'],
+                             highlightbackground=THEME['raised'] if chosen else THEME['sidebar'])
+        name, subtitle = PAGE_INFO.get(title, (title.title(), ''))
+        self.page_title.set(name)
+        self.page_subtitle.set(subtitle)
         if self.active_page is not None:
             self.active_page.destroy()
             self.active_page = None
@@ -398,60 +719,52 @@ class SitdownApp:
             self.home_page.tkraise()
             return
         self.home_page.grid_remove()
-        page = tk.Frame(self.page_host, bg=THEME['background'], padx=24, pady=15)
+        page = tk.Frame(self.page_host, bg=THEME['bg'], padx=SPACE['xl'], pady=SPACE['xs'])
         page.grid(row=0, column=0, sticky='nsew')
         self.active_page = page
-        tk.Label(page, text=title + '  /  THE SITDOWN', font=('Helvetica', 20, 'bold'),
-                 bg=THEME['background'], fg=THEME['highlight']).pack(anchor='w', pady=(0, 15))
-        if title == 'BBS':
-            self.utility_page(page)
-        elif title == 'NODES':
-            self.nodes_page(page)
-        elif title in ('MESSAGES', 'BOARDS'):
+        builders = {'BBS': self.utility_page, 'NODES': self.nodes_page, 'SETTINGS': self.integration_settings,
+                    'CHAT': self.chat_page, 'RADIO': self.radio_page, 'WIRE': self.wire_page,
+                    'ABOUT': self.about_page}
+        if title in ('MESSAGES', 'BOARDS'):
             self.database_page(page, title)
-        elif title == 'SETTINGS':
-            self.integration_settings(page)
-        elif title == 'CHAT':
-            self.chat_page(page)
-        elif title == 'RADIO':
-            for variable in (self.status, self.connection_summary, self.radio_activity, self.node_count, self.uptime):
-                tk.Label(page, textvariable=variable, bg=THEME['background'], fg=THEME['text'],
-                         font=('Helvetica', 14), justify='left').pack(anchor='w', pady=8)
-            self.page_text(page, 'Channels from the connected radio:\n' + json.dumps(self.snapshot['channels'], indent=2))
         else:
-            self.page_text(page, 'THE SITDOWN BBS\nNorth Jersey Communications Division\n\n'
-                'Built for the mesh. Raised in Jersey.\nBased on TC²-BBS by TheCommsChannel. GPL-3.0.\n\n'
-                'Weather: Open-Meteo (only when enabled).\nMQTT counts are separate from radio reception.\n'
-                'Demo screens and build checks do not establish physical radio compatibility.')
+            builders.get(title, self.about_page)(page)
 
     def page_text(self, parent, text):
-        box = tk.Text(parent, bg='#0B141A', fg=THEME['text'], wrap='word',
-                      font=('Menlo', 12), padx=15, pady=15, relief='flat')
-        scroll = ttk.Scrollbar(parent, command=box.yview)
-        scroll.pack(side='right', fill='y')
-        box.configure(yscrollcommand=scroll.set)
-        box.pack(fill='both', expand=True, pady=10)
-        box.insert('1.0', text)
-        box.configure(state='disabled')
-        return box
+        return self.ui.text_view(parent, text, bg=self.surface_key(parent))
 
     def utility_page(self, page):
+        """Broadcast: announcements, weather and the radio command list."""
+        ui, c = self.ui, THEME
         notebook = ttk.Notebook(page)
         notebook.pack(fill='both', expand=True)
-        announcement = tk.Frame(notebook, bg=THEME['panel'], padx=20, pady=20)
-        weather = tk.Frame(notebook, bg=THEME['panel'], padx=20, pady=20)
-        wire = tk.Frame(notebook, bg=THEME['panel'], padx=20, pady=20)
-        for frame, title in ((announcement, 'The Boss Has Spoken'), (weather, 'Jersey Weather Desk'), (wire, 'The Wire')):
+        announcement, weather, commands = (tk.Frame(notebook, bg=c['surface'], padx=SPACE['xl'], pady=SPACE['lg'])
+                                           for _ in range(3))
+        for frame, title in ((announcement, 'Announcement'), (weather, 'Weather desk'), (commands, 'Radio commands')):
             notebook.add(frame, text=title)
-        tk.Label(announcement, text='Broadcast to an enabled radio channel (maximum 200 UTF-8 bytes).',
-                 fg=THEME['text'], bg=THEME['panel']).pack(anchor='w')
+        self.broadcast_tabs = notebook
+        ui.label(announcement, 'Send an announcement', 'heading', bg='surface').pack(fill='x')
+        ui.label(announcement, 'Goes out once to everyone on the chosen radio channel.', 'small', 'muted',
+                 bg='surface').pack(fill='x', pady=(0, SPACE['md']))
         channel = tk.StringVar()
         options = [f"{ch['index']}: {ch['name']}" for ch in self.snapshot['channels']]
         if options:
             channel.set(options[0])
-        ttk.Combobox(announcement, textvariable=channel, values=options, state='readonly').pack(fill='x', pady=10)
-        text = tk.Text(announcement, height=5, bg=THEME['background'], fg=THEME['text'], insertbackground='white')
-        text.pack(fill='x', pady=10)
+        ui.label(announcement, 'Channel', 'small', 'muted', bg='surface').pack(fill='x')
+        ttk.Combobox(announcement, textvariable=channel, values=options, state='readonly').pack(fill='x', pady=(2, SPACE['md']))
+        if not options:
+            ui.notice(announcement, 'No channels yet. Start the BBS server so the app can read them from your radio.',
+                      'warning').pack(fill='x', pady=(0, SPACE['md']))
+        ui.label(announcement, 'Message', 'small', 'muted', bg='surface').pack(fill='x')
+        text = tk.Text(announcement, height=5, bg=c['field'], fg=c['text'], insertbackground=c['text'], relief='flat',
+                       font=ui.font('body'), padx=SPACE['sm'], pady=SPACE['sm'], highlightthickness=1,
+                       highlightbackground=c['border'], highlightcolor=c['focus'], wrap='word')
+        text.pack(fill='x', pady=(2, 0))
+        counter = tk.StringVar(value='0 / 200 bytes')
+        tk.Label(announcement, textvariable=counter, font=ui.font('small'), fg=c['muted'], bg=c['surface'],
+                 anchor='e').pack(fill='x')
+        text.bind('<KeyRelease>', lambda _e: counter.set(f"{len(text.get('1.0', 'end-1c').encode('utf-8'))} / 200 bytes"))
+
         def send():
             message = text.get('1.0', 'end-1c')
             if not channel.get() or not message.strip() or len(message.encode('utf-8')) > 200:
@@ -459,68 +772,114 @@ class SitdownApp:
                 return
             if messagebox.askyesno('Broadcast announcement?', f'Channel {channel.get()}\n\n{message}', parent=self.root):
                 self.control_request('announce', channel=int(channel.get().split(':', 1)[0]), text=message)
-        self.styled_button(announcement, 'PREVIEW & BROADCAST', send).pack(anchor='w')
-        tk.Label(announcement, text='Channel list updates when you reopen this tab after connecting.\n'
-                 'Remote /announce commands require an administrator ID in Settings.',
-                 bg=THEME['panel'], fg=THEME['highlight'], justify='left').pack(anchor='w', pady=15)
-        self.styled_button(weather, 'GET WEATHER REPORT', lambda: self.control_request('weather')).pack(anchor='w')
+        ui.button(announcement, 'Preview & broadcast…', send, 'primary').pack(anchor='w', pady=(SPACE['sm'], 0))
+        ui.notice(announcement, 'People can also send /announce over the radio if their node is listed '
+                  'under Settings → Admins.').pack(fill='x', pady=(SPACE['lg'], 0))
+
         config = self.read_config()
         enabled = config.getboolean('weather', 'internet_enabled', fallback=False)
-        self.page_text(weather, 'Internet weather: ' + ('Enabled' if enabled else 'Disabled') + '\n\n'
-                       + config.get('weather', 'local_report', fallback='No local report configured.')
-                       + '\n\nConfigure a local report or explicitly enable internet weather in Settings.\n'
-                       'Internet results use Open-Meteo, cache for ten minutes, and label stale data.')
-        wire_tabs = ttk.Notebook(wire)
-        wire_tabs.pack(fill='both', expand=True)
-        counts = tk.Frame(wire_tabs, bg=THEME['panel'], padx=10, pady=10)
-        wire_tabs.add(counts, text='Server counts')
-        self.wire_views = {}
-        for network, label in NETWORK_LABELS.items():
-            frame = tk.Frame(wire_tabs, bg=THEME['panel'], padx=10, pady=10)
-            wire_tabs.add(frame, text=label)
-            self.wire_views[network] = self.page_text(frame, self.render_wire(network))
-        self.styled_button(counts, 'REFRESH COUNTS', lambda: self.select_page('BBS')).pack(anchor='w')
-        data = self.snapshot['mqtt']
-        self.page_text(counts, f"MQTT: {data['status']}\nMessages this server session: {data['total']}\n\n"
-                       + '\n'.join(f'{count}  {topic}' for topic, count in data['topics'])
-                       + '\n\nMQTT is opt-in and never forwards messages to the radio.\n'
-                       'Counts exclude retained messages; they are not proof of radio RX.')
+        head = tk.Frame(weather, bg=c['surface'])
+        head.pack(fill='x')
+        ui.label(head, 'Weather desk', 'heading', bg='surface').pack(side='left')
+        ui.button(head, 'Get weather report', lambda: self.control_request('weather'), 'primary',
+                  small=True).pack(side='right')
+        ui.label(weather, 'Internet weather is ' + ('on (Open-Meteo, cached ten minutes).' if enabled else
+                 'off. Turn it on under Settings → Weather.'), 'small', 'muted', bg='surface').pack(fill='x')
+        self.page_text(weather, config.get('weather', 'local_report', fallback='') or
+                       'No offline report yet. Add one under Settings → Weather so /weather works without internet.')
+
+        ui.label(commands, 'Commands people can send to your BBS', 'heading', bg='surface').pack(fill='x')
+        ui.label(commands, 'They send these as a direct message to your BBS radio.', 'small', 'muted',
+                 bg='surface').pack(fill='x', pady=(0, SPACE['md']))
+        grid = tk.Frame(commands, bg=c['surface'])
+        grid.pack(fill='x')
+        grid.grid_columnconfigure(1, weight=1)
+        for row, (command, description) in enumerate(COMMANDS):
+            tk.Label(grid, text=command, font=ui.font('mono'), fg=c['text'], bg=c['surface'], anchor='w').grid(
+                row=row, column=0, sticky='w', pady=2, padx=(0, SPACE['lg']))
+            tk.Label(grid, text=description, font=ui.font('body'), fg=c['muted'], bg=c['surface'], anchor='w').grid(
+                row=row, column=1, sticky='w')
+            ui.button(grid, 'Copy', lambda value=command.split()[0]: self.copy_text(value, 'Command copied.'),
+                      'ghost', small=True).grid(row=row, column=2, sticky='e')
 
     def nodes_page(self, page):
+        ui, c = self.ui, THEME
         query = tk.StringVar()
-        tk.Label(page, text='Search the full radio node database by ID, short name, or long name.\n'
-                 'Snapshot remains visible after disconnect; reopen this tab to refresh.',
-                 bg=THEME['background'], fg=THEME['text'], justify='left').pack(anchor='w')
-        tk.Entry(page, textvariable=query, bg=THEME['panel'], fg=THEME['text'],
-                 insertbackground='white').pack(fill='x', pady=10)
+        bar = self.toolbar(page)
+        search = ui.entry(bar, query, width=40)
+        search.pack(side='left')
+        count = tk.StringVar()
+        tk.Label(bar, textvariable=count, font=ui.font('small'), fg=c['muted'], bg=c['bg']).pack(side='left',
+                                                                                              padx=SPACE['md'])
+        ui.button(bar, 'Refresh', lambda: self.select_page('NODES'), 'ghost', small=True, bg='bg').pack(side='right')
+        ui.label(page, 'Search by node id (like !1234abcd), short name or long name. The list is the snapshot from the '
+                 'last time the server was running.', 'small', 'muted').pack(fill='x')
         box = self.page_text(page, '')
+
         def refresh(*_):
             from sitdown_utilities import node_id
             key = query.get().strip().casefold()
-            rows = [row for row in self.snapshot['nodes'] if not key or node_id(key) == row['id']
+            nodes = self.snapshot['nodes']
+            rows = [row for row in nodes if not key or node_id(key) == row['id']
                     or key in (row['shortName'] + ' ' + row['longName']).casefold()]
-            text = '\n\n'.join(format_node(row) for row in rows) or 'No matching nodes. Connect a radio to load its database.'
-            box.configure(state='normal'); box.delete('1.0', 'end'); box.insert('1.0', text); box.configure(state='disabled')
+            count.set(f'{len(rows)} of {len(nodes)} nodes')
+            text = '\n\n'.join(format_node(row) for row in rows) or (
+                'No nodes match your search.' if nodes else
+                'No nodes yet. Start the BBS server to load the radio\'s node list.')
+            set_text(box, text)
         query.trace_add('write', refresh)
         refresh()
+        search.focus_set()
 
     def database_page(self, page, title):
-        self.styled_button(page, 'REFRESH', lambda: self.select_page(title)).pack(anchor='w')
+        ui, c = self.ui, THEME
+        bar = self.toolbar(page)
+        what = 'bulletins' if title == 'BOARDS' else 'mail'
+        ui.label(bar, f'Latest 100 {what} stored by your BBS. Read only; people use radio commands to post.',
+                 'small', 'muted').pack(side='left')
+        ui.button(bar, 'Refresh', lambda: self.select_page(title), 'ghost', small=True, bg='bg').pack(side='right')
         path = self.config_path().parent / 'bulletins.db'
-        text = 'No local database yet. Start the BBS to initialize it.'
+        records, problem = [], None
         if self.demo.get():
-            text = 'DEMO DATA — no radio connected\n\n' + ('Welcome to the Social Club\nGeneral: Stay local, stay connected.'
-                    if title == 'BOARDS' else 'Sample mail\nAyyy, pull up a chair.')
+            records = ([('Welcome to the Social Club', 'General · DEMO · today', 'Stay local, stay connected.')]
+                       if title == 'BOARDS' else [('Sample mail', 'From DEMO to you · today', 'Ayyy, pull up a chair.')])
         elif path.exists():
             try:
                 with sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) as db:
-                    sql = ('SELECT board, sender_short_name, date, subject, content FROM bulletins ORDER BY id DESC LIMIT 100'
-                           if title == 'BOARDS' else 'SELECT sender_short_name, recipient, date, subject, content FROM mail ORDER BY id DESC LIMIT 100')
-                    rows = db.execute(sql).fetchall()
-                text = '\n\n'.join('\n'.join(str(value) for value in row) for row in rows) or 'No messages yet.'
+                    if title == 'BOARDS':
+                        rows = db.execute('SELECT board, sender_short_name, date, subject, content FROM bulletins '
+                                          'ORDER BY id DESC LIMIT 100').fetchall()
+                        records = [(subject, f'{board} · {sender} · {date}', content)
+                                   for board, sender, date, subject, content in rows]
+                    else:
+                        rows = db.execute('SELECT sender_short_name, recipient, date, subject, content FROM mail '
+                                          'ORDER BY id DESC LIMIT 100').fetchall()
+                        records = [(subject, f'From {sender} to {recipient} · {date}', content)
+                                   for sender, recipient, date, subject, content in rows]
             except sqlite3.Error as exc:
-                text = 'Could not read the local database: ' + str(exc)
-        self.page_text(page, 'Local operator view — latest 100 records, read only.\n\n' + text)
+                problem = 'Could not read the BBS database: ' + str(exc)
+        holder = tk.Frame(page, bg=c['surface'], padx=SPACE['lg'], pady=SPACE['md'], highlightthickness=1,
+                          highlightbackground=c['border'])
+        holder.pack(fill='both', expand=True)
+        if problem:
+            ui.notice(holder, problem, 'error').pack(fill='x')
+            return
+        if not records:
+            first = not path.exists() and not self.demo.get()
+            ui.empty_state(holder, f'No {what} yet',
+                           'Start the BBS server once to create its database.' if first else
+                           f'When people post {what} over the radio, it shows up here.',
+                           ('Start server', self.start) if first else None).pack(fill='x')
+            return
+        box = ui.text_view(holder, '')
+        box.configure(state='normal')
+        for subject, meta, content in records:
+            box.insert('end', f'{subject}\n', 'heading')
+            box.insert('end', f'{meta}\n', 'muted')
+            box.insert('end', f'{content}\n\n')
+        box.configure(state='disabled')
+
+    # ------------------------------------------------------------------ chat
 
     def chat_channel_names(self):
         """Radio channels from the last snapshot plus any channel that has messages."""
@@ -570,40 +929,37 @@ class SitdownApp:
         return '🌐 ' + (label if room == label else f'{label} · {room}')
 
     def chat_page(self, page):
-        sending = ('Sending is ON for this session.' if self.centralnj_send_enabled.get() else
-                   "Sending is OFF — turn on 'Allow operator send preflight' in Settings to send.")
-        tk.Label(page, text='Channel chat and direct messages on your BBS radio. The BBS keeps answering '
-                 'direct-message commands\nunless you are in a conversation with that node. '
-                 + sending + ' History is kept between restarts.',
-                 bg=THEME['background'], fg=THEME['text'], justify='left').pack(anchor='w')
-        actions = tk.Frame(page, bg=THEME['background'])
-        actions.pack(anchor='e')
-        self.styled_button(actions, 'NEW DIRECT MESSAGE', self.new_direct_message, THEME['panel'],
-                           compact=True).pack(side='left', padx=(0, 6))
-        self.styled_button(actions, 'CLEAR HISTORY', self.clear_chat_history, THEME['panel'],
-                           compact=True).pack(side='left')
+        ui, c = self.ui, THEME
+        bar = self.toolbar(page)
+        toggle = tk.Frame(bar, bg=c['bg'])
+        toggle.pack(side='left', fill='x', expand=True)
+        ui.toggle(toggle, 'Allow sending this session', self.centralnj_send_enabled,
+                  'Needed to send chat, direct messages and announcements. Turns off when you quit.', bg='bg')
+        ui.button(bar, 'Clear history…', self.clear_chat_history, 'ghost', small=True, bg='bg').pack(side='right')
+        ui.button(bar, 'New direct message', self.new_direct_message, 'primary', small=True, bg='bg').pack(
+            side='right', padx=SPACE['xs'])
         tabs = ttk.Notebook(page)
-        tabs.pack(fill='both', expand=True, pady=(6, 0))
+        tabs.pack(fill='both', expand=True, pady=(SPACE['xs'], 0))
         self.chat_views = {}
         self.chat_tabs, self.chat_tab_frames = tabs, {}
         sendable = set(self.sendable_rooms())
         for index, name in self.chat_tab_list():
-            frame = tk.Frame(tabs, bg=THEME['panel'], padx=10, pady=10)
+            frame = tk.Frame(tabs, bg=c['surface'], padx=SPACE['md'], pady=SPACE['md'])
             tabs.add(frame, text=name)
             self.chat_tab_frames[index] = frame
             if mqtt_room(index) and index not in sendable:
                 network = NETWORK_LABELS.get(mqtt_room(index)[0], '')
-                tk.Label(frame, text=f"Read only. To send here, turn on 'Allow sending' on the {network} Settings tab.",
-                         bg=THEME['panel'], fg=THEME['highlight']).pack(side='bottom', anchor='w', pady=(6, 0))
+                ui.notice(frame, f"Read only. To send here, turn on 'Allow sending' on the {network} Settings tab.").pack(
+                    side='bottom', fill='x', pady=(SPACE['sm'], 0))
                 box = self.page_text(frame, self.chat_log.render(index, name))
                 box.see('end')
                 self.chat_views[index] = (name, box)
                 continue
-            compose = tk.Frame(frame, bg=THEME['panel'])
-            compose.pack(side='bottom', fill='x', pady=(6, 0))
+            compose = tk.Frame(frame, bg=c['surface'])
+            compose.pack(side='bottom', fill='x', pady=(SPACE['sm'], 0))
             draft = tk.StringVar()
             counter = tk.StringVar(value='0/200 bytes')
-            entry = ttk.Entry(compose, textvariable=draft, style='Desk.TEntry')
+            entry = ui.entry(compose, draft)
             peer = dm_peer(index)
             if mqtt_room(index):
                 send = lambda _event=None, k=index, n=name, d=draft: self.send_mqtt(k, n, d)
@@ -611,14 +967,15 @@ class SitdownApp:
                 send = lambda _event=None, p=peer, n=name, d=draft: self.send_dm(p, n, d)
             else:
                 send = lambda _event=None, i=index, n=name, d=draft: self.send_chat(i, n, d)
-            self.styled_button(compose, 'SEND', send, THEME['primary'], compact=True).pack(side='right', padx=(6, 0))
+            ui.button(compose, 'Send', send, 'primary', small=True).pack(side='right', padx=(SPACE['xs'], 0))
             if peer:
-                self.styled_button(compose, 'END CONVERSATION', lambda p=peer: self.end_conversation(p),
-                                   THEME['panel'], compact=True).pack(side='right', padx=(6, 0))
-            tk.Label(compose, textvariable=counter, bg=THEME['panel'], fg=THEME['highlight']).pack(side='right', padx=6)
+                ui.button(compose, 'End conversation', lambda p=peer: self.end_conversation(p), 'ghost',
+                          small=True).pack(side='right', padx=(SPACE['xs'], 0))
+            tk.Label(compose, textvariable=counter, font=ui.font('small'), fg=c['muted'], bg=c['surface']).pack(
+                side='right', padx=SPACE['sm'])
             entry.pack(side='left', fill='x', expand=True)
             entry.bind('<Return>', send)
-            draft.trace_add('write', lambda *_, d=draft, c=counter: c.set(f"{len(d.get().encode('utf-8'))}/200 bytes"))
+            draft.trace_add('write', lambda *_, d=draft, n=counter: n.set(f"{len(d.get().encode('utf-8'))}/200 bytes"))
             box = self.page_text(frame, self.chat_log.render(index, name))
             box.see('end')
             self.chat_views[index] = (name, box)
@@ -753,34 +1110,41 @@ class SitdownApp:
 
     def new_direct_message(self):
         """Pick a known node (or type an id) to start a direct conversation."""
+        ui, c = self.ui, THEME
         names = self.node_names()
         choices = [f"{short or '?'} — {long or 'unnamed'}  {node}" for node, (short, long) in sorted(
             names.items(), key=lambda item: (item[1][0] or item[0]).casefold())]
         dialog = tk.Toplevel(self.root)
         dialog.title('New direct message')
-        dialog.configure(bg=THEME['background'], padx=14, pady=12)
+        dialog.configure(bg=c['bg'], padx=SPACE['xl'], pady=SPACE['lg'])
         dialog.transient(self.root)
-        tk.Label(dialog, text='Choose a node your radio has heard, or type its id (like !1234abcd).',
-                 bg=THEME['background'], fg=THEME['text']).pack(anchor='w')
+        dialog.resizable(False, False)
+        ui.label(dialog, 'New direct message', 'title').pack(fill='x')
+        ui.label(dialog, 'Choose a node your radio has heard, or type its id (like !1234abcd).', 'small',
+                 'muted').pack(fill='x', pady=(2, SPACE['md']))
         choice = tk.StringVar()
-        box = ttk.Combobox(dialog, textvariable=choice, values=choices, width=48)
-        box.pack(fill='x', pady=8)
+        box = ttk.Combobox(dialog, textvariable=choice, values=choices, width=48, font=ui.font('body'))
+        box.pack(fill='x')
         box.focus_set()
+        problem = tk.StringVar()
+        tk.Label(dialog, textvariable=problem, font=ui.font('small'), fg=c['danger'], bg=c['bg'], anchor='w').pack(
+            fill='x', pady=(SPACE['xs'], 0))
 
         def accept(_event=None):
             text = choice.get().strip()
             peer = peer_id(text.split()[-1]) if text else None
             if peer is None:
-                self.show_info('New direct message', 'Pick a node from the list or type an id like !1234abcd.')
+                problem.set('Pick a node from the list or type an id like !1234abcd.')
                 return
             dialog.destroy()
             self.open_dm_tab(peer)
 
-        buttons = tk.Frame(dialog, bg=THEME['background'])
-        buttons.pack(anchor='e')
-        self.styled_button(buttons, 'CANCEL', dialog.destroy, THEME['panel'], compact=True).pack(side='right')
-        self.styled_button(buttons, 'OPEN', accept, THEME['primary'], compact=True).pack(side='right', padx=6)
+        buttons = tk.Frame(dialog, bg=c['bg'])
+        buttons.pack(fill='x', pady=(SPACE['md'], 0))
+        ui.button(buttons, 'Open', accept, 'primary', small=True, bg='bg').pack(side='right')
+        ui.button(buttons, 'Cancel', dialog.destroy, 'ghost', small=True, bg='bg').pack(side='right', padx=SPACE['xs'])
         box.bind('<Return>', accept)
+        dialog.bind('<Escape>', lambda _e: dialog.destroy())
         self.new_dm_dialog = dialog
         return dialog
 
@@ -793,12 +1157,11 @@ class SitdownApp:
             if box.get('1.0', 'end-1c') == text:
                 continue
             at_bottom = box.yview()[1] >= 0.999
-            box.configure(state='normal')
-            box.delete('1.0', 'end')
-            box.insert('1.0', text)
-            box.configure(state='disabled')
+            set_text(box, text)
             if at_bottom:
                 box.see('end')
+
+    # ------------------------------------------------------------------ settings
 
     def render_wire(self, network):
         if self.dual_mqtt is None:
@@ -899,6 +1262,25 @@ class SitdownApp:
         if frame is not None:
             self.chat_tabs.select(frame)
 
+    def refresh_mqtt_states(self):
+        """Per-network status words for the dashboard, Network page and status bar; set only on change."""
+        states = getattr(self, 'mqtt_states', None)
+        if not states:
+            return                      # partially built app (tests, or before build)
+        snapshot = self.dual_mqtt.snapshot() if self.dual_mqtt is not None else {}
+        live = 0
+        for network, variable in states.items():
+            status = str((snapshot.get(network) or {}).get('status') or 'Off')
+            friendly = {'Subscription requested (not yet confirmed)': 'Connected — listening',
+                        'Disabled': 'Off', 'Stopped': 'Off'}.get(status, status)
+            if friendly.startswith('Connected'):
+                live += 1
+            if variable.get() != friendly:
+                variable.set(friendly)
+        summary = f'MQTT: {live} of {len(self.mqtt_states)} networks live' if live else 'MQTT: off'
+        if self.mqtt_summary.get() != summary:
+            self.mqtt_summary.set(summary)
+
     def start_opted_in_mqtt(self):
         """Only explicitly enabled and auto-connect profiles may open broker sessions."""
         if self.demo.get():
@@ -931,10 +1313,12 @@ class SitdownApp:
     def mqtt_network_action(self, network, connect):
         """Manual receive-only connection for one saved network profile."""
         from sitdown_dual_mqtt import DualMQTTMonitors
+        label = NETWORK_LABELS.get(network, network)
         if not connect:
             if self.dual_mqtt is not None:
                 self.dual_mqtt.stop(network)
-            self.show_info('Mesh Networks', f'{network}: disconnected.')
+            self.log(f'{label}: disconnected.')
+            self.refresh_mqtt_states()
             return
         if self.demo.get():
             self.show_info('Mesh Networks', 'Demo mode does not connect to brokers.')
@@ -943,42 +1327,92 @@ class SitdownApp:
             self.dual_mqtt = DualMQTTMonitors(self.read_config())
         ok = self.dual_mqtt.connect(network)
         status = self.dual_mqtt.snapshot()[network]['status']
-        self.show_info('Mesh Networks', f'{network}: {status}. ' +
-                       ('Receive-only connection requested.' if ok else 'Check saved settings.'))
+        self.refresh_mqtt_states()
+        if ok:
+            self.log(f'{label}: connecting to the broker…')
+        else:
+            self.show_info(f'{label} not connected', f'{status}. Check the {label} tab in Settings.')
 
     def integration_settings(self, page):
+        ui, c = self.ui, THEME
         config = self.read_config()
         tabs = ttk.Notebook(page)
         fields = {}
         self.setting_fields = fields
-        sections = {
-            'startup': [('enabled', 'Broadcast on server start', 'bool'), ('channel', 'Channel index', '0'), ('message', 'Custom welcome (blank = personality)', '')],
-            'announcements': [('admin_nodes', 'Remote administrator node IDs (comma separated)', '')],
-            'weather': [('internet_enabled', 'Enable internet weather', 'bool'), ('local_report', 'Offline report (include time)', ''), ('latitude', 'Latitude', '40.20'), ('longitude', 'Longitude', '-74.50')],
-            'mqtt_monitor': [('enabled', 'Enable MQTT counter', 'bool'), ('host', 'Broker hostname', ''), ('topic', 'Subscription topic', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', '')],
-            'mqtt_centralnj': [('enabled', 'Enable CentralNJ monitor', 'bool'), ('auto_connect', 'Auto-connect CentralNJ at startup', 'bool'), ('host', 'Broker hostname', 'mqtt.meshtastic.org'), ('topic', 'Topics (up to 4, comma-separated): exact, or msh/<region>/2/e/<channel>/+', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', ''), ('channel_keys', 'Channel keys to read text (Name=PSK, comma-separated, e.g. CentralNJ=base64key)', ''), ('allow_publish', 'Allow sending to CentralNJ from CHAT (off by default)', 'bool'), ('send_as', 'Send as node id (blank = your BBS radio)', '')],
-            'mqtt_sjmesh': [('enabled', 'Enable SJMesh monitor', 'bool'), ('auto_connect', 'Auto-connect SJMesh at startup', 'bool'), ('host', 'Broker hostname', 'mqtt.sjmesh.net'), ('topic', 'Topics (up to 4, comma-separated): exact, or msh/<region>/2/e/<channel>/+', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', ''), ('channel_keys', 'Channel keys to read text (Name=PSK, comma-separated, e.g. LongFast=AQ==)', ''), ('allow_publish', 'Allow sending to SJMesh from CHAT (off by default)', 'bool'), ('send_as', 'Send as node id (blank = your BBS radio)', '')],
-            'personality': [('public_mode', 'Public greeting: clean / attitude / uncensored', 'clean'), ('allow_public_profanity', 'Allow profanity in generated public greetings', 'bool')],
-        }
-        for section, entries in sections.items():
-            holder = tk.Frame(tabs, bg=THEME['panel'])
+        sections = SETTINGS_SECTIONS
+
+        general = tk.Frame(tabs, bg=c['surface'])
+        tabs.add(general, text='General')
+        body = self.scrollable(general)
+        body.configure(padx=SPACE['xl'], pady=SPACE['md'])
+        ui.section(body, 'Appearance')
+        ui.label(body, 'Theme', 'body', bg='surface').pack(fill='x')
+        ui.segmented(body, self.appearance, (('Dark', 'dark'), ('Light', 'light'))).pack(anchor='w', pady=(2, SPACE['md']))
+        ui.label(body, 'Text size', 'body', bg='surface').pack(fill='x')
+        ui.segmented(body, self.text_size, (('Small', 'small'), ('Default', 'default'), ('Large', 'large'),
+                                            ('Larger', 'larger'))).pack(anchor='w', pady=(2, 0))
+        ui.section(body, 'Sending')
+        ui.toggle(body, 'Allow sending this session', self.centralnj_send_enabled,
+                  'Chat, direct messages and announcements stay blocked until this is on. It turns off when you quit, '
+                  'and each channel still asks you once.')
+        ui.button(body, 'Check send safety', self.check_centralnj_send_safety, 'ghost', small=True).pack(anchor='w')
+        ui.section(body, 'Backups')
+        ui.label(body, 'A backup holds your settings and BBS databases (mail, boards). It may contain messages and '
+                 'keys, so keep it private.', 'small', 'muted', bg='surface', wrap=620).pack(fill='x')
+        line = tk.Frame(body, bg=c['surface'])
+        line.pack(fill='x', pady=(SPACE['sm'], 0))
+        ui.button(line, 'Back up now…', self.backup, small=True).pack(side='left')
+        ui.button(line, 'Verify a backup…', self.verify_backup, 'ghost', small=True).pack(side='left', padx=SPACE['xs'])
+        ui.section(body, 'Troubleshooting')
+        line = tk.Frame(body, bg=c['surface'])
+        line.pack(fill='x')
+        ui.button(line, 'Copy diagnostics', self.copy_diagnostics, small=True).pack(side='left')
+        ui.button(line, 'Radio + MQTT setup guide', lambda: self.show_info('CentralNJ MQTT / Radio Setup', SETUP_GUIDE),
+                  'ghost', small=True).pack(side='left', padx=SPACE['xs'])
+
+        for section, (tab_name, entries) in sections.items():
+            holder = tk.Frame(tabs, bg=c['surface'])
+            tabs.add(holder, text=tab_name)
             frame = self.scrollable(holder)
-            frame.configure(padx=20, pady=12)
-            frame.grid_columnconfigure(1, weight=1)
-            tabs.add(holder, text={'mqtt_monitor': 'MQTT', 'mqtt_centralnj': 'CentralNJ', 'mqtt_sjmesh': 'SJMesh', 'startup': 'Startup', 'announcements': 'Admins', 'weather': 'Weather', 'personality': 'Personality'}[section])
-            # One row per setting (label beside its field) so every tab fits on screen.
-            for row, (key, label, default) in enumerate(entries):
+            frame.configure(padx=SPACE['xl'], pady=SPACE['md'])
+            if section in ('mqtt_centralnj', 'mqtt_sjmesh'):
+                network = section[5:]
+                head = tk.Frame(frame, bg=c['surface'])
+                head.pack(fill='x', pady=(0, SPACE['sm']))
+                ui.pill(head, self.mqtt_states[network], role='body').pack(side='left')
+                ui.button(head, 'Disconnect', lambda n=network: self.mqtt_network_action(n, False), 'ghost',
+                          small=True).pack(side='right')
+                ui.button(head, 'Connect', lambda n=network: self.mqtt_network_action(n, True), small=True).pack(
+                    side='right', padx=SPACE['xs'])
+            if section == 'personality':
+                self.greeting_settings(frame)
+            grid = None
+            row = 0
+            for key, label, default, help_text in entries:
+                if key == '#':
+                    ui.section(frame, label)
+                    if help_text:
+                        ui.label(frame, help_text, 'small', 'muted', bg='surface', wrap=620).pack(fill='x')
+                    grid = None
+                    continue
                 if default.startswith('bool'):
                     var = tk.BooleanVar(value=config.getboolean(section, key, fallback=default == 'bool_true'))
-                    tk.Checkbutton(frame, text=label, variable=var, bg=THEME['panel'], fg=THEME['text'],
-                                   selectcolor=THEME['background']).grid(row=row, column=0, columnspan=2, sticky='w', pady=3)
+                    ui.toggle(frame, label, var, help_text)
+                    grid = None
                 else:
+                    if grid is None:
+                        grid = tk.Frame(frame, bg=c['surface'])
+                        grid.pack(fill='x')
+                        grid.grid_columnconfigure(1, weight=1)
+                        row = 0
                     var = tk.StringVar(value=config.get(section, key, fallback=default))
-                    tk.Label(frame, text=label, bg=THEME['panel'], fg=THEME['text'], wraplength=300,
-                             justify='left').grid(row=row, column=0, sticky='w', padx=(0, 14), pady=3)
-                    ttk.Entry(frame, textvariable=var, show='*' if key in ('password', 'channel_keys') else '',
-                              style='Desk.TEntry').grid(row=row, column=1, sticky='ew', pady=3)
+                    ui.field(grid, label, var, help_text, secret=key in ('password', 'channel_keys'), row=row)
+                    row += 1
                 fields[(section, key)] = var
+            if section == 'mqtt_monitor':
+                ui.button(frame, 'Check this configuration', lambda: check_mqtt_configuration(), 'ghost',
+                          small=True).pack(anchor='w', pady=(SPACE['md'], 0))
+
         def save():
             for (section, key), var in fields.items():
                 if not config.has_section(section):
@@ -1028,60 +1462,32 @@ class SitdownApp:
                 self.show_info('Settings saved', 'Restart the server to apply these settings.')
             except (ValueError, OSError) as exc:
                 self.show_info('Settings not saved', str(exc))
-        guide = (
-                    "CENTRALNJ / TWO-WAY RADIO SETUP\n"
-                    "1. Configure the CentralNJ channel and its PSK on your Meshtastic radio.\n"
-                    "2. Configure the radio MQTT broker: mqtt.meshtastic.org.\n"
-                    "3. Enter broker credentials on the radio, not in a public repository.\n"
-                    "4. Enable MQTT uplink and downlink for the CentralNJ channel on the radio.\n"
-                    "5. Set the radio MQTT root topic to the correct regional topic.\n"
-                    "6. Connect the radio to this BBS by USB or TCP and test with a small message.\n\n"
-                    "The MQTT counter above is separate: it only counts incoming broker "
-                    "traffic and cannot decrypt or send Meshtastic messages. "
-                    "Leave it disabled unless you explicitly want monitoring. "
-                    "Avoid subscribing broadly to msh/US/# on limited hardware; "
-                    "start with the narrowest authorized topic. "
-                    "Two-way delivery requires radio and channel configuration; "
-                    "this screen does not activate radio MQTT automatically."
-                )
+
         def check_mqtt_configuration():
             """Validate current unsaved form values offline, without opening a connection."""
             preview = configparser.ConfigParser()
             preview.add_section('mqtt_monitor')
-            for key, _label, _default in sections['mqtt_monitor']:
+            for key, _label, _default, _help in sections['mqtt_monitor'][1]:
+                if key == '#':
+                    continue
                 var = fields[('mqtt_monitor', key)]
-                preview.set('mqtt_monitor', key,
-                            str(var.get()).lower() if isinstance(var, tk.BooleanVar) else var.get())
-            report = ActivityCounter(preview).diagnostics()
-            self.show_info('MQTT Configuration Check', report)
+                preview.set('mqtt_monitor', key, str(var.get()).lower() if isinstance(var, tk.BooleanVar) else var.get())
+            self.show_info('MQTT Configuration Check', ActivityCounter(preview).diagnostics())
 
-        self.toggle_row(page, 'Allow operator send preflight (off by default)', self.centralnj_send_enabled)
-        # Compact action bar: three rows instead of a tall stack that squeezed the form.
-        actions = tk.Frame(page, bg=THEME['background'])
-        actions.pack(side='bottom', fill='x', pady=(6, 0))
-        rows = (
-            [('SHOW MQTT NETWORK STATUS', self.mqtt_network_status, THEME['primary'])]
-            + [(f'{verb} {name.upper()}', lambda n=name, c=(verb == 'CONNECT'): self.mqtt_network_action(n, c), THEME['panel'])
-               for name in ('centralnj', 'sjmesh') for verb in ('CONNECT', 'DISCONNECT')],
-            [('CENTRALNJ SETUP GUIDE', lambda: self.show_info('CentralNJ MQTT / Radio Setup', guide), THEME['primary']),
-             ('CHECK MQTT CONFIGURATION', check_mqtt_configuration, THEME['panel']),
-             ('CHECK SEND SAFETY', self.check_centralnj_send_safety, THEME['panel'])],
-            [('SAVE — APPLY ON NEXT SERVER START', save, THEME['connected'])],
-        )
-        for buttons in rows:
-            line = tk.Frame(actions, bg=THEME['background'])
-            line.pack(fill='x', pady=2)
-            for text, command, color in buttons:
-                self.styled_button(line, text, command, color, compact=True).pack(
-                    side='left', expand=True, fill='x', padx=2)
-        # Pack the expandable notebook last so footer controls stay visible on Intel Mac.
+        actions = tk.Frame(page, bg=c['bg'])
+        actions.pack(side='bottom', fill='x', pady=(SPACE['sm'], SPACE['sm']))
+        ui.button(actions, 'Save changes', save, 'primary', bg='bg').pack(side='right')
+        ui.label(actions, 'Server settings apply the next time the BBS server starts. Appearance and sending apply '
+                 'right away.', 'small', 'muted').pack(side='left')
+        # Pack the expandable notebook last so the save bar stays visible on small screens.
         tabs.pack(side='top', fill='both', expand=True)
 
     def scrollable(self, parent):
         """Return a frame inside parent that scrolls vertically only when it does not fit."""
-        canvas = tk.Canvas(parent, bg=THEME['panel'], highlightthickness=0, bd=0)
+        bg = THEME['surface']
+        canvas = tk.Canvas(parent, bg=bg, highlightthickness=0, bd=0)
         bar = ttk.Scrollbar(parent, orient='vertical', command=canvas.yview)
-        inner = tk.Frame(canvas, bg=THEME['panel'])
+        inner = tk.Frame(canvas, bg=bg)
         window = canvas.create_window(0, 0, window=inner, anchor='nw')
         canvas.configure(yscrollcommand=bar.set)
         canvas.pack(side='left', fill='both', expand=True)
@@ -1104,6 +1510,8 @@ class SitdownApp:
         canvas.bind('<Leave>', lambda _e: canvas.unbind_all('<MouseWheel>'))
         return inner
 
+    # ------------------------------------------------------------------ feedback
+
     def check_centralnj_send_safety(self):
         """Offline preflight only; never sends a packet or publishes MQTT."""
         allowed, reason = send_preflight(enabled=self.centralnj_send_enabled.get(),
@@ -1112,94 +1520,45 @@ class SitdownApp:
         self.show_info('CentralNJ Send Safety', reason)
         return allowed
 
-    def layout_navigation(self, event):
-        """Wrap measured controls so every action survives font/window resizing."""
-        if not self.nav_buttons:
-            return
-        cell_width = max(control.winfo_reqwidth() for control in self.nav_buttons) + 6
-        columns = max(1, min(len(self.nav_buttons), event.width // cell_width))
-        if columns == self._nav_columns:
-            return
-        self._nav_columns = columns
-        for column in range(len(self.nav_buttons)):
-            self.navigation.grid_columnconfigure(column, weight=1 if column < columns else 0,
-                                                 uniform='nav' if column < columns else '')
-        for index, control in enumerate(self.nav_buttons):
-            row, column = divmod(index, columns)
-            control.grid(row=row, column=column, sticky="ew", padx=3, pady=2)
-
-    @staticmethod
-    def draw_skyline(canvas, width, height):
-        """Original vector skyline and suspension bridge, inspired by the app icon."""
-        canvas.delete("all")
-        def line(points, color, thickness=1):
-            canvas.create_line(*[value * (width if i % 2 == 0 else height)
-                                 for i, value in enumerate(points)],
-                               fill=color, width=thickness)
-        for index, top in enumerate((.48, .3, .55, .2, .4, .32, .5, .16, .38, .25, .52)):
-            left = index / 11
-            right = left + .065
-            canvas.create_rectangle(left * width, top * height, right * width,
-                                    .88 * height, fill="#10181D", outline="")
-            for level in range(3):
-                y = top + .1 + level * .12
-                if y < .84:
-                    line((left + .02, y, right - .02, y), "#A47D3D", 2)
-        for tower in (.22, .78):
-            line((tower, .12, tower, .9), "#C8C8BD", 3)
-        cables = ((.02, .62), (.22, .18), (.5, .58), (.78, .18), (.98, .62))
-        for (x1, y1), (x2, y2) in zip(cables, cables[1:]):
-            line((x1, y1, x2, y2), "#C8C8BD", 2)
-            for step in range(1, 6):
-                t = step / 6
-                x, y = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
-                line((x, y, x, .88), "#64747B")
-        line((0, .88, 1, .88), THEME["highlight"], 3)
-        # Layer the identity over the skyline rather than shrinking it into a side panel.
-        title_font = ("Helvetica", max(22, min(47, int(width / 24))), "bold")
-        # Aqua Tk does not render stippled fills transparently; keep skyline visible.
-        canvas.create_rectangle(0, 0, width * .52, height * .86, fill='#071017', outline='')
-        canvas.create_text(width * .035, height * .2, text='THE', fill='#F5F5F0', anchor='w',
-                           font=('Helvetica', max(12, int(width / 70)), 'bold'))
-        x = width * .035
-        for word, color in (('SIT', '#008C45'), ('DOWN', '#F5F5F0'), (' BBS', '#E13232')):
-            item = canvas.create_text(x, height * .5, text=word, fill=color, anchor='w', font=title_font)
-            x = canvas.bbox(item)[2]
-        canvas.create_text(width * .038, height * .78,
-                           text='NORTH JERSEY  •  COMMUNICATIONS DIVISION',
-                           fill='#F5F5F0', anchor='w',
-                           font=('Helvetica', max(9, min(13, int(width / 82))), 'bold'))
-
-
     def show_info(self, title, message):
-        """Non-blocking themed information window; server polling stays active."""
+        """Non-blocking themed message; the accent shows success, warning or error alongside the words."""
+        c, ui = THEME, self.ui
+        lowered = title.lower()
+        kind = ('error' if any(w in lowered for w in ('fail', 'not ', 'error', 'need', 'missing', "couldn't")) else
+                'success' if any(w in lowered for w in ('saved', 'verified', 'copied')) else
+                'warning' if any(w in lowered for w in ('check', 'demo', 'safety', 'wait')) else 'info')
+        accent = {'error': 'danger', 'success': 'success', 'warning': 'warning', 'info': 'info'}[kind]
+        icon = {'error': '■', 'success': '✓', 'warning': '▲', 'info': 'ⓘ'}[kind]
         previous_focus = self.root.focus_get()
         win = tk.Toplevel(self.root)
         win.title(title)
         win.transient(self.root)
-        win.configure(bg=self.colors["background"])
+        win.configure(bg=c['background'])
         win.resizable(False, False)
-        tk.Frame(win, bg=self.colors["connected"], height=4).pack(fill="x")
-        tk.Label(win, text=title, bg=self.colors["background"],
-                 fg=self.colors["highlight"], font=("Helvetica", 16, "bold"),
-                 wraplength=440, justify="left").pack(anchor="w", padx=22, pady=(18, 12))
-        tk.Label(win, text=message, bg=self.colors["background"],
-                 fg=self.colors["text"], font=("Helvetica", 12),
-                 wraplength=440, justify="left").pack(anchor="w", padx=22, pady=(0, 18))
+        tk.Frame(win, bg=c[accent], height=3).pack(fill='x')
+        head = tk.Frame(win, bg=c['background'])
+        head.pack(fill='x', padx=SPACE['xl'], pady=(SPACE['lg'], SPACE['sm']))
+        tk.Label(head, text=icon, font=ui.font('title'), fg=c[accent], bg=c['background']).pack(side='left',
+                                                                                             padx=(0, SPACE['sm']))
+        tk.Label(head, text=title, font=ui.font('title'), fg=c['text'], bg=c['background'], wraplength=420,
+                 justify='left', anchor='w').pack(side='left', fill='x')
+        tk.Label(win, text=message, font=ui.font('body'), fg=c['muted'], bg=c['background'], wraplength=460,
+                 justify='left', anchor='w').pack(fill='x', padx=SPACE['xl'], pady=(0, SPACE['lg']))
+
         def dismiss(_event=None):
             win.destroy()
             if previous_focus is not None and previous_focus.winfo_exists():
                 previous_focus.focus_set()
-            return "break"
-        close = self.styled_button(win, "OK", dismiss, self.colors["primary"])
-        close.pack(fill="x", padx=22, pady=(0, 18))
-        win.bind("<Escape>", dismiss)
-        win.bind("<Return>", dismiss)
-        win.protocol("WM_DELETE_WINDOW", dismiss)
+            return 'break'
+        close = ui.button(win, 'OK', dismiss, 'primary', bg='bg')
+        close.pack(anchor='e', padx=SPACE['xl'], pady=(0, SPACE['lg']))
+        win.bind('<Escape>', dismiss)
+        win.bind('<Return>', dismiss)
+        win.protocol('WM_DELETE_WINDOW', dismiss)
         win.update_idletasks()
         x = max(0, self.root.winfo_rootx() + (self.root.winfo_width() - win.winfo_reqwidth()) // 2)
-        y = max(0, self.root.winfo_rooty() + (self.root.winfo_height() - win.winfo_reqheight()) // 2)
-        win.geometry(f"+{x}+{y}")
+        y = max(0, self.root.winfo_rooty() + (self.root.winfo_height() - win.winfo_reqheight()) // 3)
+        win.geometry(f'+{x}+{y}')
         close.focus_set()
         return win
 
@@ -1208,67 +1567,29 @@ class SitdownApp:
         kind = "TCP / Network" if self.connection.get() == "tcp" else "USB / Serial"
         endpoint = self.address.get().strip() or "Not specified (auto/default)"
         self.connection_summary.set(f"Configured: {kind}\nEndpoint: {endpoint}")
+        label = getattr(self, 'address_label', None)
+        if label is not None:
+            label.set('Radio IP address or hostname' if self.connection.get() == 'tcp'
+                      else 'USB port (leave blank to pick automatically)')
 
     def refresh_status_indicator(self, *_args):
-        """Color denotes BBS process state, not a verified radio link."""
-        state = self.status.get().lower()
-        if "demo" in state or "starting" in state or "retry" in state:
-            color = THEME["highlight"]
-        elif "running" in state or "initialized" in state:
-            color = THEME["connected"]
-        else:
-            color = THEME["primary"]
-        self.status_dot.configure(fg=color)
+        """The header button offers the next action; the pill beside it shows process state, not radio link."""
+        button = getattr(self, 'server_button', None)
+        if button is None or not button.winfo_exists():
+            return
+        running = bool(self.supervisor and self.supervisor.running) or str(self.status.get()).startswith('Demo running')
+        button.configure(text='Stop server' if running else 'Start server')
 
     def show_home(self):
-        self.select_page("HOME")
-        """Home is the main live dashboard."""
-        self.log("HOME: Dashboard is already open.")
-
-    def show_command_info(self, shortcut):
-        """Show the actual radio command; do not imply desktop mail is implemented."""
-        self.show_info("The Sitdown BBS — Radio Commands",
-                            f"Send {shortcut} as a direct message to your BBS node.\n"
-                            "This desktop build does not provide a direct message composer.")
-
-    def show_radio(self):
-        """Bring attention to real radio connection settings on the dashboard."""
-        self.show_info("Radio Connection",
-                            "Choose USB / Serial or Network radio on the dashboard, "
-                            "then enter the device path or radio IP address. "
-                            "Start the Sitdown to launch the configured BBS. "
-                            "A running server process does not prove a radio link.")
+        self.select_page('HOME')
 
     def show_about(self):
-        self.show_info(
-            "About The Sitdown BBS",
-            f"THE SITDOWN BBS {VERSION} — North Jersey Communications Division\n"
-            "Jersey-themed Meshtastic bulletin board.\n"
-            "Built for the mesh. Raised in Jersey.\n\n"
-            "Original project: TC²-BBS by TheCommsChannel.\n"
-            "https://github.com/TheCommsChannel/TC2-BBS-mesh\n\n"
-            "Connection details shown here come from the running app, "
-            "not from promotional demo artwork."
-        )
+        self.select_page('ABOUT')
 
     def styled_button(self, parent, text, command, color=None, compact=False):
-        # macOS Aqua ignores custom backgrounds on native Tk buttons,
-        # producing white-on-white labels. Use a keyboard-accessible Label.
-        background = color or self.colors["primary"]
-        control = tk.Label(parent, text=text, bg=background, fg="#FFFFFF",
-                           padx=8 if compact else 13, pady=7,
-                           cursor="hand2",
-                           font=("Helvetica", 10 if compact else 12, "bold"), relief="flat",
-                           highlightthickness=2, highlightbackground=self.colors["background"],
-                           takefocus=True)
-        control.bind("<Button-1>", lambda _event: command())
-        control.bind("<Return>", lambda _event: command())
-        control.bind("<space>", lambda _event: command())
-        control.bind("<FocusIn>", lambda _event: control.configure(
-            highlightbackground=self.colors["highlight"]))
-        control.bind("<FocusOut>", lambda _event: control.configure(
-            highlightbackground=self.colors["background"]))
-        return control
+        """Compatibility wrapper for older call sites: maps a colour to a design-system button kind."""
+        kind = 'primary' if color in (None, THEME['primary'], THEME['connected']) else 'secondary'
+        return self.ui.button(parent, text, command, kind, small=compact, bg=self.surface_key(parent))
 
     def log(self, message):
         self.output.configure(state="normal")
@@ -1291,19 +1612,20 @@ class SitdownApp:
             window.lift()
             window.focus_force()
             return
+        c = THEME
         window = tk.Toplevel(self.root)
         self._expanded_log_window = window
-        window.title("THE SITDOWN BBS — Live Server Log")
-        window.geometry("1000x650")
+        window.title('The Sitdown BBS — Activity log')
+        window.geometry('1000x650')
         window.minsize(550, 300)
-        frame = tk.Frame(window, bg="#111e22", padx=12, pady=12)
-        frame.pack(fill="both", expand=True)
-        scrollbar = tk.Scrollbar(frame)
-        scrollbar.pack(side="right", fill="y")
-        viewer = tk.Text(frame, bg="#01090b", fg="#42ed50", font=("Menlo", 14),
-                         wrap="word", padx=16, pady=12, state="disabled",
-                         yscrollcommand=scrollbar.set)
-        viewer.pack(side="left", fill="both", expand=True)
+        frame = tk.Frame(window, bg=c['bg'], padx=SPACE['md'], pady=SPACE['md'])
+        frame.pack(fill='both', expand=True)
+        scrollbar = ttk.Scrollbar(frame)
+        scrollbar.pack(side='right', fill='y')
+        viewer = tk.Text(frame, bg=c['log_bg'], fg=c['log_text'], font=self.ui.font('mono'), wrap='word',
+                         padx=SPACE['lg'], pady=SPACE['md'], state='disabled', relief='flat',
+                         highlightthickness=1, highlightbackground=c['border'], yscrollcommand=scrollbar.set)
+        viewer.pack(side='left', fill='both', expand=True)
         scrollbar.configure(command=viewer.yview)
         self._expanded_log_view = viewer
         self._sync_expanded_log()
@@ -1362,7 +1684,7 @@ class SitdownApp:
             snapshot = self.output.get("1.0", "end-1c")
             Path(destination).write_text(snapshot + "\n", encoding="utf-8")
         except OSError as exc:
-            messagebox.showerror("Couldn't save log", str(exc))
+            self.show_info("Couldn't save the log", str(exc))
             return
         self.log("The Backroom: log exported.")
 
@@ -1420,11 +1742,11 @@ class SitdownApp:
             shutil.copy2(ROOT / "example_config.ini", config)
             self.log("Created config.ini in ~/.sitdown-bbs. Review it before connecting a radio.")
         if not config.exists():
-            messagebox.showerror("Need a Guy?", "Missing config.ini. Copy example_config.ini to config.ini and configure it first.")
+            self.show_info("Server not started — settings file missing", "There is no config.ini yet. Copy example_config.ini to config.ini next to the app and review it, then press Start again.")
             return
         addr = self.address.get().strip()
         if self.connection.get() == "tcp" and not addr:
-            messagebox.showerror("Need a Guy?", "Enter the radio IP or hostname for TCP.")
+            self.show_info("Server not started — radio address needed", "Network connections need the radio's IP address or hostname. Enter it under Radio connection on the Dashboard.")
             return
         self.snapshot = {'nodes': [], 'channels': [], 'mqtt': {'status': 'Awaiting server', 'total': 0, 'topics': []}}
         self.save()
@@ -1437,7 +1759,7 @@ class SitdownApp:
             self.supervisor = ServerSupervisor(cmd, DATA if getattr(sys, "frozen", False) else ROOT)
             self.supervisor.start()
             self.status.set("Starting...")
-            self.link_warning.set("Radio link: Unverified — awaiting SDK status")
+            self.link_warning.set("Radio: connecting…")
             if hasattr(self, "radio_activity"):
                 self.radio_activity.set("Radio activity: Awaiting messages")
             self.log("Starting The Sitdown BBS...")
@@ -1466,7 +1788,7 @@ class SitdownApp:
                 elif kind == "activity" and value == "rx":
                     self.radio_activity.set("Radio RX observed in BBS logs")
                 elif kind == "link_state":
-                    self.link_warning.set("Radio disconnected — awaiting SDK recovery (30s)" if value == "disconnected" else "SDK session established; continuous link unverified")
+                    self.link_warning.set("Radio disconnected — waiting 30s for it to come back" if value == "disconnected" else "Radio connected")
                 elif kind == "control":
                     if value.get('type') == 'snapshot':
                         self.snapshot = value
@@ -1500,7 +1822,7 @@ class SitdownApp:
                 self.traffic.set(f"Messages observed: RX {monitor.rx_count} / TX {monitor.tx_count}")
             if monitor.running:
                 if monitor.link_state == "disconnected":
-                    self.link_warning.set("Radio disconnected — awaiting SDK recovery (30s)")
+                    self.link_warning.set("Radio disconnected — waiting 30s for it to come back")
                 if monitor.last_rx_at is not None:
                     age = max(0, int(time.time() - monitor.last_rx_at))
                     self.radio_activity.set(f"Radio RX observed {age}s ago")
@@ -1509,11 +1831,12 @@ class SitdownApp:
                 code = monitor.process.poll() if monitor.process else "unknown"
                 self.log(f"BBS process exited ({code}).")
                 self.status.set("Disconnected / process stopped")
-                self.link_warning.set("Radio link: Process stopped — unverified")
+                self.link_warning.set("Radio: not connected (server stopped)")
                 self.schedule_recovery()
                 self.supervisor = None
                 self.radio_activity.set("Radio activity: Process stopped")
         self.drain_mqtt_events()
+        self.refresh_mqtt_states()
         self.refresh_chat_views()
         # Only SDK link events count as connected; MQTT monitor is read-only.
         radio_state = 'unverified'
@@ -1590,28 +1913,18 @@ class SitdownApp:
             self.supervisor.stop()
             self.supervisor = None
         self.status.set("Stopped")
-        self.link_warning.set("Radio link: Unverified — server stopped")
+        self.link_warning.set("Radio: not connected (server stopped)")
         if hasattr(self, "radio_activity"):
             self.radio_activity.set("Radio activity: Process stopped")
         self.uptime.set("Uptime: 0s")
         self.log("Fuggedaboutit. Server stopped.")
 
     def commands(self):
-        win = tk.Toplevel(self.root)
-        win.title("The Playbook | Radio Commands")
-        win.configure(bg=THEME["background"])
-        tk.Label(win, text="DM these commands to your BBS radio", bg=THEME["background"],
-                 fg=THEME["highlight"], font=("Helvetica", 14, "bold")).pack(padx=20, pady=12)
-        selected = tk.StringVar(value=COMMANDS[0][0])
-        for cmd, desc in COMMANDS:
-            tk.Radiobutton(win, text=f"{cmd} — {desc}", value=cmd, variable=selected,
-                           bg=THEME["background"], fg=THEME["text"],
-                           selectcolor=THEME["panel"], anchor="w").pack(fill="x", padx=20)
-        def copy():
-            win.clipboard_clear()
-            win.clipboard_append(selected.get())
-            win.update()
-        self.styled_button(win, "Copy selected command", copy, THEME["primary"]).pack(pady=15)
+        """The radio command list now lives on the Broadcast page."""
+        self.select_page('BBS')
+        tabs = getattr(self, 'broadcast_tabs', None)
+        if tabs is not None and tabs.winfo_exists():
+            tabs.select(2)
 
     def settings(self):
         self.select_page('SETTINGS')
@@ -1676,13 +1989,17 @@ if __name__ == "__main__":
             app = SitdownApp(root)
             app.demo.set(True)
             app.start()
-            for page in ('BBS', 'MESSAGES', 'BOARDS', 'NODES', 'CHAT', 'SETTINGS', 'HOME'):
-                app.select_page(page)
-                root.update()
-                if page == 'HOME':
-                    assert app.home_page.winfo_ismapped(), 'Home dashboard did not reappear'
-                    assert app.active_page is None, 'Other page still active on Home'
-                    assert app.home_page.winfo_children(), 'Home dashboard controls disappeared'
+            for theme in ('light', 'dark'):
+                app.appearance.set(theme)
+                for page in ('BBS', 'MESSAGES', 'BOARDS', 'NODES', 'CHAT', 'WIRE', 'RADIO', 'ABOUT', 'SETTINGS', 'HOME'):
+                    app.select_page(page)
+                    root.update()
+                    if page == 'HOME':
+                        assert app.home_page.winfo_ismapped(), 'Home dashboard did not reappear'
+                        assert app.active_page is None, 'Other page still active on Home'
+                        assert app.home_page.winfo_children(), 'Home dashboard controls disappeared'
+            app.text_size.set('larger')
+            root.update()
             assert app.status.get() == 'Demo running — no radio'
             root.destroy()
         print(f'SITDOWN_SMOKE_OK version={VERSION}', flush=True)
