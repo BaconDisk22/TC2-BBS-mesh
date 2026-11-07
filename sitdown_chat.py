@@ -98,9 +98,25 @@ def format_message(event):
     return f"{stamp}  {who}\n    {event['text']}"
 
 
+MQTT_NETWORKS = ('centralnj', 'sjmesh')
+ROOM = re.compile(r'[^\s/+#:]{1,11}')
+
+
 def event_key(event):
-    """Where a message lives: a channel index, or 'dm:!xxxxxxxx' for a direct conversation."""
-    return f"dm:{event['peer']}" if event.get('type') == 'dm' else event['channel']
+    """Where a message lives: a channel index, 'dm:!xxxxxxxx', or 'mqtt:<network>:<channel>'."""
+    if event.get('type') == 'dm':
+        return f"dm:{event['peer']}"
+    if event.get('type') == 'mqtt':
+        return f"mqtt:{event['network']}:{event['room']}"
+    return event['channel']
+
+
+def mqtt_room(key):
+    """(network, channel name) for an MQTT chat key, else None."""
+    if isinstance(key, str) and key.startswith('mqtt:'):
+        network, _sep, room = key[5:].partition(':')
+        return network, room
+    return None
 
 
 def dm_peer(key):
@@ -114,6 +130,10 @@ def clean_event(event):
         if kind == 'dm':
             place = {'peer': event['peer']}
             valid = isinstance(event['peer'], str) and PEER.fullmatch(event['peer']) is not None
+        elif kind == 'mqtt':
+            place = {'network': event['network'], 'room': event['room']}
+            valid = (event['network'] in MQTT_NETWORKS and isinstance(event['room'], str)
+                     and ROOM.fullmatch(event['room']) is not None)
         else:
             channel = int(event['channel'])
             place = {'channel': channel}
@@ -124,7 +144,7 @@ def clean_event(event):
         return None
     if not valid:
         return None
-    clean = {'type': kind if kind == 'dm' else 'chat', **place, 'from': event['from'][:16],
+    clean = {'type': kind if kind in ('dm', 'mqtt') else 'chat', **place, 'from': event['from'][:16],
              'short': str(event.get('short') or '')[:8], 'long': str(event.get('long') or '')[:40],
              'text': event['text'][:MAX_TEXT], 'rx_time': rx_time, 'mine': bool(event.get('mine'))}
     if clean['mine']:
@@ -222,6 +242,10 @@ class ChatLog:
     def channels(self):
         return sorted(key for key in self._messages if isinstance(key, int))
 
+    def rooms(self):
+        """MQTT chat keys that have messages, in a stable order."""
+        return sorted(key for key in self._messages if mqtt_room(key))
+
     def peers(self):
         """Direct-message peers, most recent conversation first."""
         dms = [(rows[-1]['rx_time'], dm_peer(key)) for key, rows in self._messages.items() if dm_peer(key) and rows]
@@ -233,6 +257,12 @@ class ChatLog:
     def render(self, channel, name):
         rows = self.messages(channel)
         kept = 'kept between restarts' if self.path is not None else 'this session'
+        if mqtt_room(channel):
+            header = (f'{name} — channel text from the MQTT broker, {kept} (last {len(rows)}).\n'
+                      "Shown because you entered this channel's key in Settings. Not heard by your radio.\n\n")
+            if not rows:
+                return header + 'No messages yet.'
+            return header + '\n'.join(format_message(row) for row in rows)
         if dm_peer(channel):
             header = (f'{name} — direct messages, {kept} (last {len(rows)}).\n'
                       'After you send, their replies come here for 10 minutes instead of the BBS menu. '

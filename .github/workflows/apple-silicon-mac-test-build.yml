@@ -70,7 +70,7 @@ jobs:
             --icon build/sitdown.icns \
             --add-data "example_config.ini:." --add-data "assets:assets" \
             --hidden-import paho.mqtt.client --collect-all meshtastic \
-            --collect-all pubsub \
+            --collect-all pubsub --hidden-import cryptography.hazmat.primitives.ciphers \
             sitdown_desktop.py
           test -d "dist/The Sitdown BBS.app"
           test "$(lipo -archs 'dist/The Sitdown BBS.app/Contents/MacOS/The Sitdown BBS')" = "arm64"

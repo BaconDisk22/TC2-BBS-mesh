@@ -1,7 +1,8 @@
 """Opt-in, independent, receive-only MQTT monitor sessions.
 
-Incoming payloads are parsed for metadata only and queued for the desktop.
-Nothing here publishes, decrypts, bridges, or transmits Meshtastic packets.
+Incoming payloads are parsed and queued for the desktop. Packets are decrypted
+only on channels the operator configured a key for (channel_keys); everything
+else stays metadata only. Nothing here publishes, bridges, or transmits.
 The existing legacy mqtt_monitor remains unchanged.
 """
 import configparser
@@ -9,6 +10,7 @@ from collections import Counter
 from threading import Lock
 from sitdown_mqtt_event_queue import MQTTEventQueue
 from sitdown_mqtt_pipeline import MQTTMessagePipeline
+from sitdown_mqtt_crypto import safe_channel_keys
 from sitdown_online import ActivityCounter, topic_list
 
 NETWORKS = {
@@ -44,6 +46,12 @@ def topics_allowed(value):
             and all(topic_allowed(topic) for topic in topics))
 
 
+def channel_keys(source):
+    """{network: {channel name: key}} from each profile's channel_keys setting."""
+    return {name: safe_channel_keys(source.get(section, 'channel_keys', fallback=''))
+            for name, (section, _host) in NETWORKS.items()}
+
+
 def network_config(source, network):
     """Return an isolated ActivityCounter config; never fill in credentials."""
     section, default_host = NETWORKS[network]
@@ -68,7 +76,7 @@ class DualMQTTMonitors:
 
     def __init__(self, config, pipeline=None, events=None):
         self.config = config
-        self.pipeline = pipeline or MQTTMessagePipeline()
+        self.pipeline = pipeline or MQTTMessagePipeline(keys=channel_keys(config))
         self.events = events or MQTTEventQueue()
         # Each broker runs its own Paho thread; the shared deduplicator is not thread-safe.
         self._pipeline_lock = Lock()

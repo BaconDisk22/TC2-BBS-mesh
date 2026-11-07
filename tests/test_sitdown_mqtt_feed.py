@@ -20,7 +20,7 @@ class FeedFormattingTests(unittest.TestCase):
         self.assertIn('from !0000007b → broadcast', text)
         self.assertIn('ch LongFast', text)
         self.assertIn('via !12345678', text)
-        self.assertIn('ENCRYPTED — not decrypted', text)
+        self.assertIn('ENCRYPTED — no key for this channel', text)
 
     def test_decoded_entry_names_port_but_not_content(self):
         text = format_entry(FeedEntry(0, accepted(encrypted=False, portnum=1, to_id=0x1c8)))

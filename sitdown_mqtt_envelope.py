@@ -1,4 +1,4 @@
-"""Decode Meshtastic MQTT ServiceEnvelope without decrypting or forwarding."""
+"""Decode a Meshtastic MQTT ServiceEnvelope offline; decryption lives in sitdown_mqtt_crypto."""
 from dataclasses import dataclass
 from typing import Optional
 
@@ -12,10 +12,14 @@ class EnvelopeSummary:
     to_id: int
     encrypted: bool
     portnum: Optional[int]
+    channel: int = 0              # channel hash byte on encrypted packets
+    ciphertext: bytes = b''
+    plain: bytes = b''            # serialized Data for packets a gateway sent unencrypted
+    decrypted: bool = False
 
 
 def decode_service_envelope(payload: bytes) -> EnvelopeSummary:
-    """Parse protobuf bytes offline; never publish or attempt decryption."""
+    """Parse protobuf bytes offline; never publishes."""
     if not isinstance(payload, bytes) or not payload or len(payload) > 65536:
         raise ValueError("Invalid or oversized MQTT envelope")
     from meshtastic.protobuf import mqtt_pb2
@@ -36,4 +40,7 @@ def decode_service_envelope(payload: bytes) -> EnvelopeSummary:
         to_id=int(packet.to),
         encrypted=not decoded,
         portnum=int(packet.decoded.portnum) if decoded else None,
+        channel=int(packet.channel),
+        ciphertext=bytes(packet.encrypted) if not decoded else b'',
+        plain=packet.decoded.SerializeToString() if decoded else b'',
     )
