@@ -20,6 +20,7 @@ import threading
 from pathlib import Path
 from sitdown_control import start_reader, snapshot, handle, emit
 from sitdown_chat import chat_event
+from sitdown_dm import claim_reply
 
 from config_init import initialize_config, get_interface, init_cli_parser, merge_config
 from db_operations import initialize_database
@@ -73,6 +74,13 @@ def main():
     initialize_database()
 
     def receive_packet(packet, interface):
+        if args.desktop_control:
+            direct = claim_reply(packet, interface, interface.sitdown.conversations)
+            if direct is not None:
+                # The operator is talking with this node; keep the reply away from the BBS menu.
+                logging.info('Direct message from %s passed to the operator conversation.', direct['peer'])
+                emit(direct)
+                return
         on_receive(packet, interface)
         if args.desktop_control:
             event = chat_event(packet, interface)

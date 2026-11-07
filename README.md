@@ -73,6 +73,7 @@ The desktop launcher includes a few handy tools for keeping tabs on the family b
 | **Refresh USB Ports** | List detected serial devices and fill in the port when exactly one is available |
 | **Restart on crash** | Optionally restart the server process after an unexpected exit with capped exponential backoff |
 | **Radio activity** | Reports incoming Meshtastic messages observed in BBS logs without claiming a permanent connection |
+| **Chat / Direct messages** | CHAT has a tab per radio channel plus a ✉ tab per person. **NEW DIRECT MESSAGE** picks a heard node. For 10 minutes after you message someone, their plain replies come to your tab instead of the BBS menu (replies starting with `/` still reach the BBS); **END CONVERSATION** hands them back early. Ticks: ✓ relayed, ✓✓ delivered |
 
 **Validation scope:** The earlier version's two-way TCP radio test is historical evidence only. These staged changes and their packaged app require a fresh Intel Mac/radio test. Node snapshots are not continuous presence checks; backups do not yet support restore.
 

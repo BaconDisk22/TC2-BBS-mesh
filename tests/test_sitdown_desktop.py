@@ -10,6 +10,12 @@ from unittest.mock import Mock, patch
 import sitdown_desktop as desktop
 
 
+def SimpleNamespaceInterface():
+    """A radio interface stand-in: this BBS radio's number and no known nodes."""
+    from types import SimpleNamespace
+    return SimpleNamespace(myInfo=SimpleNamespace(my_node_num=0x934cca70), nodes={})
+
+
 class DesktopTests(unittest.TestCase):
     def test_send_safety_stays_blocked_and_does_not_access_credentials_or_transport(self):
         app = desktop.SitdownApp.__new__(desktop.SitdownApp)
@@ -383,6 +389,53 @@ class DesktopWindowTests(unittest.TestCase):
         self.root.update()
         self.app.note_chat_message(heard('later', 1))
         self.assertTrue(chat.cget('text').endswith('CHAT (1)'))
+
+    def test_direct_message_tab_opens_from_picker_and_counts_replies(self):
+        from sitdown_dm import dm_event
+        peer = '!b2c649cb'
+        self.app.snapshot = {**self.app.snapshot, 'channels': [{'index': 0, 'name': 'Primary'}],
+                             'nodes': [{'id': peer, 'shortName': 'EDC', 'longName': 'Every Day Carry'}]}
+        dialog = self.app.new_direct_message()
+        self.root.update()
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        from tkinter import ttk
+        picker = next(w for w in descendants(dialog) if isinstance(w, ttk.Combobox))
+        self.assertEqual(list(picker.cget('values')), [f'EDC — Every Day Carry  {peer}'])
+        picker.set(picker.cget('values')[0])
+        picker.event_generate('<Return>')
+        self.root.update()
+        self.assertFalse(dialog.winfo_exists())
+        tabs = self.app.chat_tabs
+        frame = self.app.chat_tab_frames[f'dm:{peer}']
+        self.assertEqual(tabs.select(), str(frame))
+        self.assertEqual(tabs.tab(frame, 'text'), '✉ EDC')
+        labels = [w.cget('text') for w in descendants(frame) if isinstance(w, tk.Label)]
+        self.assertIn('END CONVERSATION', labels)
+        tabs.select(self.app.chat_tab_frames[0])
+        self.root.update()
+        reply = dm_event({'from': 0xb2c649cb, 'fromId': peer, 'to': 0x934cca70, 'rxTime': 1792626000,
+                          'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'payload': b'thanks!'}},
+                         SimpleNamespaceInterface())
+        self.app.receive_dm(reply)
+        self.app.refresh_chat_views()
+        self.root.update()
+        self.assertEqual(tabs.tab(self.app.chat_tab_frames[f'dm:{peer}'], 'text'), '✉ EDC (1)')
+        self.assertIn('thanks!', self.app.chat_views[f'dm:{peer}'][1].get('1.0', 'end'))
+        self.assertEqual(tabs.select(), str(self.app.chat_tab_frames[0]))      # reader's tab kept
+
+    def test_reply_from_new_node_adds_its_tab_while_chat_is_open(self):
+        from sitdown_dm import dm_event
+        self.app.select_page('CHAT')
+        self.root.update()
+        reply = dm_event({'from': 0x0000abcd, 'fromId': '!0000abcd', 'to': 0x934cca70, 'rxTime': 1792626000,
+                          'decoded': {'portnum': 'TEXT_MESSAGE_APP', 'payload': b'hey'}}, SimpleNamespaceInterface())
+        self.app.receive_dm(reply)
+        self.root.update()
+        self.assertIn('dm:!0000abcd', self.app.chat_tab_frames)
+        self.assertEqual(self.app.chat_unread['dm:!0000abcd'], 1)
 
     def test_settings_save_preserves_existing_config_and_validates(self):
         path = Path(self.directory.name) / 'config.ini'

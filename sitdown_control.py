@@ -59,6 +59,12 @@ def handle(service, request):
             event = service.chat_send(request.get('channel'), request.get('text', ''), on_status=emit)
             return {'type': 'result', 'action': action,
                     'text': 'Chat message submitted to radio; waiting for a relay.', 'chat': event}
+        elif action == 'dm':
+            event = service.dm_send(request.get('node'), request.get('text', ''), on_status=emit)
+            return {'type': 'result', 'action': action,
+                    'text': 'Direct message submitted to radio; waiting for delivery.', 'chat': event}
+        elif action == 'dm_end':
+            result = service.dm_end(request.get('node'))
         elif action == 'weather':
             result = service.weather.report()
         elif action == 'snapshot':
