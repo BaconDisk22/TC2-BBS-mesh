@@ -8,6 +8,7 @@ from sitdown_personality import Personality
 from sitdown_online import WeatherDesk, ActivityCounter
 from sitdown_broadcasts import BroadcastStore
 from sitdown_chat import BROADCAST, ChatSendLimiter, routing_status, sent_event
+from sitdown_dm import Conversations, dm_sent_event, dm_status, peer_id
 
 
 def node_id(value):
@@ -122,6 +123,56 @@ class LocalUtilities:
         number = getattr(info, 'my_node_num', None)
         sender = f'!{number:08x}' if isinstance(number, int) else 'this radio'
         return sent_event(channel, text, sender, packet_id=reply['id'])
+
+    @property
+    def conversations(self):
+        return self.__dict__.setdefault('_conversations', Conversations())
+
+    def my_node(self):
+        info = getattr(self.interface, 'myInfo', None)
+        number = getattr(info, 'my_node_num', None)
+        return number if isinstance(number, int) else None
+
+    def dm_send(self, node, text, on_status=None):
+        """Send one operator direct message and open a conversation with that node; local desktop only.
+
+        on_status(event) receives a chat_status event: delivered (the node itself
+        acknowledged), relayed (a neighbour passed it on) or failed (NAK).
+        """
+        peer = peer_id(node)
+        mine = self.my_node()
+        if peer is None or (mine is not None and peer == f'!{mine:08x}'):
+            raise ValueError('Pick another node to message (an id like !1234abcd).')
+        if not isinstance(text, str) or not text.strip() or len(text.encode('utf-8')) > 200:
+            raise ValueError('Message must contain 1–200 UTF-8 bytes.')
+        with self.lock:
+            limiter = self.__dict__.setdefault('chat_limiter', ChatSendLimiter())
+            if not limiter.reserve():
+                raise ValueError('Slow down: chat allows one message every 2 seconds and 6 per minute.')
+            reply = {}
+
+            def on_response(packet):
+                status, reason = dm_status(packet, peer)
+                if on_status is not None and reply.get('id'):
+                    on_status({'type': 'chat_status', 'id': reply['id'], 'status': status, 'reason': reason})
+
+            packet = self.interface.sendData(text.encode('utf-8'), destinationId=int(peer[1:], 16),
+                                             portNum=portnums_pb2.PortNum.TEXT_MESSAGE_APP, wantAck=True,
+                                             onResponse=on_response, onResponseAckPermitted=True,
+                                             channelIndex=0)
+            packet_id = getattr(packet, 'id', 0)
+            reply['id'] = packet_id if isinstance(packet_id, int) else 0
+            self.conversations.open(peer)
+        sender = f'!{mine:08x}' if mine is not None else 'this radio'
+        logging.info('Operator direct message to %s submitted; their replies come to the desktop for 10 minutes.', peer)
+        return dm_sent_event(peer, text, sender, packet_id=reply['id'])
+
+    def dm_end(self, node):
+        peer = peer_id(node)
+        if peer is None:
+            raise ValueError('Unknown node.')
+        self.conversations.close(peer)
+        return f'Conversation with {peer} ended; their messages go to the BBS again.'
 
     def schedule(self, when, channel, text, *, sender=None, local=False):
         self.validate_announcement(channel, text, sender=sender, local=local)

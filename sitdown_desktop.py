@@ -25,7 +25,8 @@ from sitdown_restore_preflight import inspect_backup_archive
 from sitdown_errors import explain_transport_error
 from sitdown_monitor import ServerSupervisor
 from sitdown_mqtt_feed import MeshFeed, NETWORK_LABELS, format_stats
-from sitdown_chat import ChatLog, status_label
+from sitdown_chat import ChatLog, dm_peer, event_key, status_label
+from sitdown_dm import peer_id
 from sitdown_version import VERSION
 from sitdown_personality import Personality
 import zipfile
@@ -64,6 +65,8 @@ class SitdownApp:
         self.chat_unread = Counter()
         self.chat_tabs = None
         self.chat_tab_frames = {}
+        self.dm_peers = []
+        self.dm_confirmed = set()
         self.supervisor = None
         self.restart_at = None
         self.retry_count = 0
@@ -522,19 +525,39 @@ class SitdownApp:
             names.setdefault(index, f'Channel {index}')
         return dict(sorted(names.items())) or {0: 'Primary'}
 
+    def node_names(self):
+        """Known radio nodes from the last snapshot: id -> (short, long)."""
+        return {row['id']: (str(row.get('shortName') or ''), str(row.get('longName') or ''))
+                for row in self.snapshot.get('nodes') or [] if isinstance(row, dict) and isinstance(row.get('id'), str)}
+
+    def dm_tab_name(self, peer):
+        short, _long = self.node_names().get(peer, ('', ''))
+        return '✉ ' + (short or peer)
+
+    def chat_tab_list(self):
+        """(key, tab name) for each channel, then each direct conversation (this session's first)."""
+        tabs = list(self.chat_channel_names().items())
+        peers = list(dict.fromkeys(self.dm_peers + self.chat_log.peers()))
+        return tabs + [(f'dm:{peer}', self.dm_tab_name(peer)) for peer in peers]
+
     def chat_page(self, page):
         sending = ('Sending is ON for this session.' if self.centralnj_send_enabled.get() else
                    "Sending is OFF — turn on 'Allow operator send preflight' in Settings to send.")
-        tk.Label(page, text='Channel chat on your BBS radio. The BBS keeps answering direct-message '
-                 'commands.\n' + sending + ' History is kept between restarts.',
+        tk.Label(page, text='Channel chat and direct messages on your BBS radio. The BBS keeps answering '
+                 'direct-message commands\nunless you are in a conversation with that node. '
+                 + sending + ' History is kept between restarts.',
                  bg=THEME['background'], fg=THEME['text'], justify='left').pack(anchor='w')
-        self.styled_button(page, 'CLEAR HISTORY', self.clear_chat_history, THEME['panel'],
-                           compact=True).pack(anchor='e')
+        actions = tk.Frame(page, bg=THEME['background'])
+        actions.pack(anchor='e')
+        self.styled_button(actions, 'NEW DIRECT MESSAGE', self.new_direct_message, THEME['panel'],
+                           compact=True).pack(side='left', padx=(0, 6))
+        self.styled_button(actions, 'CLEAR HISTORY', self.clear_chat_history, THEME['panel'],
+                           compact=True).pack(side='left')
         tabs = ttk.Notebook(page)
         tabs.pack(fill='both', expand=True, pady=(6, 0))
         self.chat_views = {}
         self.chat_tabs, self.chat_tab_frames = tabs, {}
-        for index, name in self.chat_channel_names().items():
+        for index, name in self.chat_tab_list():
             frame = tk.Frame(tabs, bg=THEME['panel'], padx=10, pady=10)
             tabs.add(frame, text=name)
             self.chat_tab_frames[index] = frame
@@ -543,8 +566,15 @@ class SitdownApp:
             draft = tk.StringVar()
             counter = tk.StringVar(value='0/200 bytes')
             entry = ttk.Entry(compose, textvariable=draft, style='Desk.TEntry')
-            send = lambda _event=None, i=index, n=name, d=draft: self.send_chat(i, n, d)
+            peer = dm_peer(index)
+            if peer:
+                send = lambda _event=None, p=peer, n=name, d=draft: self.send_dm(p, n, d)
+            else:
+                send = lambda _event=None, i=index, n=name, d=draft: self.send_chat(i, n, d)
             self.styled_button(compose, 'SEND', send, THEME['primary'], compact=True).pack(side='right', padx=(6, 0))
+            if peer:
+                self.styled_button(compose, 'END CONVERSATION', lambda p=peer: self.end_conversation(p),
+                                   THEME['panel'], compact=True).pack(side='right', padx=(6, 0))
             tk.Label(compose, textvariable=counter, bg=THEME['panel'], fg=THEME['highlight']).pack(side='right', padx=6)
             entry.pack(side='left', fill='x', expand=True)
             entry.bind('<Return>', send)
@@ -565,8 +595,9 @@ class SitdownApp:
 
     def note_chat_message(self, event):
         """Count a heard message as unread unless it is ours or its tab is on screen."""
-        if not event.get('mine') and event.get('channel') != self.visible_chat_channel():
-            self.chat_unread[event['channel']] += 1
+        key = event_key(event)
+        if not event.get('mine') and key != self.visible_chat_channel():
+            self.chat_unread[key] += 1
             self.update_unread_labels()
 
     def mark_visible_chat_read(self):
@@ -588,9 +619,12 @@ class SitdownApp:
 
     def log_chat_status(self, sent):
         """Server log line for the radio's reply to one of our chat messages."""
-        name = self.chat_channel_names().get(sent['channel'], f"Channel {sent['channel']}")
+        if sent.get('type') == 'dm':
+            name = 'DM ' + self.dm_tab_name(sent['peer'])[2:]
+        else:
+            name = 'Chat ' + self.chat_channel_names().get(sent['channel'], f"Channel {sent['channel']}")
         text = sent['text'] if len(sent['text']) <= 40 else sent['text'][:39] + '…'
-        self.log(f'Chat {name}: {status_label(sent)} — "{text}"')
+        self.log(f'{name}: {status_label(sent)} — "{text}"')
 
     def clear_chat_history(self):
         if messagebox.askyesno('Clear chat history?', 'Delete saved chat messages for every channel '
@@ -618,6 +652,101 @@ class SitdownApp:
         self.control_request('chat', channel=index, text=text)
         draft.set('')
         return True
+
+    def send_dm(self, peer, name, draft):
+        """Operator direct message; the same opt-in gate as channel chat, plus a per-node confirmation."""
+        text = draft.get()
+        monitor = self.supervisor
+        radio_ready = bool(monitor and monitor.running and monitor.link_state == 'sdk_connected')
+        allowed, reason = send_preflight(enabled=self.centralnj_send_enabled.get(), confirmed=True,
+                                         radio_ready=radio_ready, demo_mode=self.demo.get(), message=text)
+        if not allowed:
+            self.show_info('Message not sent', reason)
+            return False
+        if peer not in self.dm_confirmed:
+            if not messagebox.askyesno(f'Message {name[2:]}?',
+                                       f'This sends a direct message over the radio to {peer}.\n\n'
+                                       'For 10 minutes after each message, their plain replies come to this tab '
+                                       'instead of the BBS menu (replies starting with / still reach the BBS).\n\n'
+                                       'Allow direct messages to this node for the rest of this session?',
+                                       parent=self.root):
+                return False
+            self.dm_confirmed.add(peer)
+        self.control_request('dm', node=peer, text=text)
+        draft.set('')
+        return True
+
+    def receive_dm(self, event):
+        """A conversation reply from the server; new peers get their own tab on the next redraw."""
+        if not self.chat_log.add(event):
+            return
+        peer = event['peer']
+        self.log(f'Direct message from {self.dm_tab_name(peer)[2:]} ({peer}) — see CHAT.')
+        if f'dm:{peer}' not in self.chat_views and self.chat_tabs is not None and self.chat_tabs.winfo_exists():
+            if peer not in self.dm_peers:
+                self.dm_peers.insert(0, peer)
+            showing = self.visible_chat_channel()
+            if showing is not None:
+                self.select_page('CHAT')            # redraw with the new tab, keeping the reader's tab
+                frame = self.chat_tab_frames.get(showing)
+                if frame is not None:
+                    self.chat_tabs.select(frame)
+        self.note_chat_message(event)
+
+    def dm_result(self, value):
+        if value.get('error'):
+            self.log('Direct message not sent: ' + value['error'])
+            self.show_info('Message not sent', value['error'])
+            return
+        if value.get('action') == 'dm':
+            self.chat_log.add(value.get('chat') or {})
+        self.log(value.get('text', 'Done.'))
+
+    def end_conversation(self, peer):
+        self.control_request('dm_end', node=peer)
+
+    def open_dm_tab(self, peer):
+        """Show (creating if needed) the direct-message tab for one node."""
+        if peer not in self.dm_peers:
+            self.dm_peers.insert(0, peer)
+        self.select_page('CHAT')
+        frame = self.chat_tab_frames.get(f'dm:{peer}')
+        if frame is not None and self.chat_tabs is not None:
+            self.chat_tabs.select(frame)
+            self.mark_visible_chat_read()
+
+    def new_direct_message(self):
+        """Pick a known node (or type an id) to start a direct conversation."""
+        names = self.node_names()
+        choices = [f"{short or '?'} — {long or 'unnamed'}  {node}" for node, (short, long) in sorted(
+            names.items(), key=lambda item: (item[1][0] or item[0]).casefold())]
+        dialog = tk.Toplevel(self.root)
+        dialog.title('New direct message')
+        dialog.configure(bg=THEME['background'], padx=14, pady=12)
+        dialog.transient(self.root)
+        tk.Label(dialog, text='Choose a node your radio has heard, or type its id (like !1234abcd).',
+                 bg=THEME['background'], fg=THEME['text']).pack(anchor='w')
+        choice = tk.StringVar()
+        box = ttk.Combobox(dialog, textvariable=choice, values=choices, width=48)
+        box.pack(fill='x', pady=8)
+        box.focus_set()
+
+        def accept(_event=None):
+            text = choice.get().strip()
+            peer = peer_id(text.split()[-1]) if text else None
+            if peer is None:
+                self.show_info('New direct message', 'Pick a node from the list or type an id like !1234abcd.')
+                return
+            dialog.destroy()
+            self.open_dm_tab(peer)
+
+        buttons = tk.Frame(dialog, bg=THEME['background'])
+        buttons.pack(anchor='e')
+        self.styled_button(buttons, 'CANCEL', dialog.destroy, THEME['panel'], compact=True).pack(side='right')
+        self.styled_button(buttons, 'OPEN', accept, THEME['primary'], compact=True).pack(side='right', padx=6)
+        box.bind('<Return>', accept)
+        self.new_dm_dialog = dialog
+        return dialog
 
     def refresh_chat_views(self):
         """Redraw visible chat tabs whose text changed, keeping the reader near the newest line."""
@@ -1226,10 +1355,14 @@ class SitdownApp:
                     elif value.get('type') == 'chat':
                         if self.chat_log.add(value):
                             self.note_chat_message(value)
+                    elif value.get('type') == 'dm':
+                        self.receive_dm(value)
                     elif value.get('type') == 'chat_status':
                         sent = self.chat_log.set_status(value.get('id'), value.get('status'), value.get('reason'))
                         if sent is not None:
                             self.log_chat_status(sent)
+                    elif value.get('action') in ('dm', 'dm_end'):
+                        self.dm_result(value)
                     elif value.get('action') == 'chat':
                         if value.get('error'):
                             self.log('Chat not sent: ' + value['error'])
