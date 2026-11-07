@@ -38,6 +38,10 @@ for text, mine, status in (('Anyone on CentralNJ tonight?', False, None), ('Ayyy
     app.chat_log.add({'type': 'chat', 'channel': 1, 'from': '!934cca70' if mine else '!b2c649cb',
                       'short': '' if mine else 'EDC', 'long': '' if mine else 'Every Day Carry', 'text': text,
                       'rx_time': now - 300, 'mine': mine, 'id': 9 if mine else None, 'status': status or 'sending'})
+for n, (short, long) in enumerate((('JRSY', 'Jersey Shore Relay'), ('PINE', 'Pine Barrens Node'),
+                                    ('HOBK', 'Hoboken Roof'), ('TRNT', 'Trenton Base')), start=1):
+    app.node_directory.record_mqtt('centralnj', 0x0a000000 + n, short, long)
+app.record_radio_nodes(app.snapshot['nodes'])
 app.chat_log.add({'type': 'dm', 'peer': '!b2c649cb', 'from': '!b2c649cb', 'short': 'EDC', 'long': 'Every Day Carry',
                   'text': 'Got your message, thanks!', 'rx_time': now - 60, 'mine': False})
 

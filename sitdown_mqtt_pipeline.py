@@ -58,7 +58,8 @@ class MQTTMessagePipeline:
         if data.portnum == NODEINFO_PORT:
             self.remember_names(network, summary.from_id, data.payload)
         if data.portnum != TEXT_PORT or summary.to_id != BROADCAST:
-            return ProcessingResult(True, 'Opened with channel key', network, summary)
+            short, long = self.names(network, summary.from_id) if data.portnum == NODEINFO_PORT else ('', '')
+            return ProcessingResult(True, 'Opened with channel key', network, summary, short=short, long=long)
         text = bytes(data.payload).decode('utf-8', errors='replace')[:MAX_TEXT]
         short, long = self.names(network, summary.from_id)
         return ProcessingResult(True, 'Channel text', network, summary, text=text, short=short, long=long)

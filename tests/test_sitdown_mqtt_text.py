@@ -132,6 +132,12 @@ class PipelineTests(unittest.TestCase):
         result = pipe.process('centralnj', envelope(data(1, b'hi'), packet_id=11))
         self.assertEqual((result.short, result.long), ('EDC', 'Every Day Carry'))
 
+    def test_nodeinfo_result_itself_carries_the_names(self):
+        pipe = self.pipeline()
+        user = mesh_pb2.User(short_name='EDC', long_name='Every Day Carry')
+        result = pipe.process('centralnj', envelope(data(4, user.SerializeToString()), packet_id=12))
+        self.assertEqual((result.short, result.long, result.text), ('EDC', 'Every Day Carry', None))
+
     def test_unencrypted_text_only_on_keyed_channel(self):
         pipe = self.pipeline()
         self.assertEqual(pipe.process('centralnj', envelope(data(1, b'plain'), encrypt=False)).text, 'plain')
