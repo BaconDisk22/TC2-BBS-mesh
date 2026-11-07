@@ -3,7 +3,7 @@
 set -euo pipefail
 : "${GH_TOKEN:?}" "${GITHUB_REPOSITORY:?}" "${GITHUB_RUN_ID:?}"
 : "${GITHUB_SHA:?}" "${SCREENSHOT_PATHS:?}" "${CHECK_WORKFLOWS:?}"
-[[ "$GITHUB_REPOSITORY" == BaconDisk22/* ]] || exit 1
+[[ "$GITHUB_REPOSITORY" == TheLogsAreScreaming/* ]] || exit 1
 [[ "${GITHUB_REF:-}" == refs/heads/main ]] || exit 1
 [[ "${GITHUB_EVENT_NAME:-}" == push || "${GITHUB_EVENT_NAME:-}" == workflow_dispatch ]] || exit 1
 
