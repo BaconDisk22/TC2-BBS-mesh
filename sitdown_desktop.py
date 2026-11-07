@@ -493,6 +493,19 @@ class SitdownApp:
         self.home_split.add(top, minsize=120, stretch='never')
         self.home_split.add(log_section, stretch='always',
                             minsize=log_header.winfo_reqheight() + LOG_MIN_LINES * int(linespace) + 60)
+        log_minimum = log_header.winfo_reqheight() + LOG_MIN_LINES * int(linespace) + 60
+
+        def fit_top(_event=None):
+            """Give the cards the height their wrapped text needs, but never squeeze the log below its minimum."""
+            if not top.winfo_exists():
+                return
+            room = self.home_split.winfo_height() - log_minimum - SPACE['sm']
+            height = top.winfo_reqheight() if room <= 0 else min(top.winfo_reqheight(), room)
+            if height != getattr(self, '_top_height', None):
+                self._top_height = height
+                self.home_split.paneconfigure(top, height=height)
+        cards.bind('<Configure>', lambda _e: self.root.after_idle(fit_top))
+        self.home_split.bind('<Configure>', lambda _e: self.root.after_idle(fit_top))
         if not getattr(self, '_greeted', False):
             self._greeted = True
             self.log(Personality(self.desktop_mouth.get(), self.public_mouth.get(),

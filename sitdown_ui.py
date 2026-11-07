@@ -379,7 +379,7 @@ def fit_wrap(label, limit=640):
 
     def resize(event):
         width = max(80, min(limit, event.width - 4))
-        if int(label.cget('wraplength') or 0) != width:
+        if str(label.cget('wraplength')) != str(width):     # cget may return a Tcl object
             label.configure(wraplength=width)
     label.bind('<Configure>', resize)
     return label
