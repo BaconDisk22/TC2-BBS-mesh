@@ -370,7 +370,13 @@ class UI:
 
 
 def fit_wrap(label, limit=640):
-    """Wrap a label to the width it is given, so text never runs past a narrow card."""
+    """Wrap a label to the width it is given, so text never runs past a narrow card.
+
+    The label asks for almost no width of its own (width=1), so long text cannot
+    push its card wider than the column; pack/grid then stretch it and it wraps.
+    """
+    label.configure(width=1)
+
     def resize(event):
         width = max(80, min(limit, event.width - 4))
         if int(label.cget('wraplength') or 0) != width:
