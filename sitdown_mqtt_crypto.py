@@ -33,17 +33,22 @@ def parse_psk(text):
 
 
 def parse_channel_keys(setting):
-    """{channel name: key bytes} from 'Name=PSK, Name2=PSK2'. Raises ValueError naming the bad entry."""
+    """{channel name: key bytes} from 'Name=PSK, Name2=PSK2'.
+
+    Errors name the entry by position and channel name only; key text is never
+    echoed, because it may be a real key the operator pasted in the wrong place.
+    """
     keys = {}
-    for entry in (part.strip() for part in (setting or '').split(',')):
-        if not entry:
-            continue
+    entries = [part.strip() for part in (setting or '').split(',') if part.strip()]
+    for number, entry in enumerate(entries, start=1):
         name, sep, psk = entry.partition('=')
         name = name.strip()
         # base64 may end in '='; partition splits on the first one, which follows the name.
-        if not sep or not name or any(ch.isspace() or ch in '/+#' for ch in name) or len(name) > 11:
-            raise ValueError(f'Channel key entry "{name or entry[:12]}" must look like Name=base64key '
-                             '(name up to 11 characters, no spaces).')
+        if not sep or not name or any(ch.isspace() or ch in '/+#=' for ch in name) or len(name) > 11:
+            where = f'Entry {number}' if len(entries) > 1 else 'The entry'
+            raise ValueError(f'{where} needs the channel name first, then =, then the key, '
+                             'like CentralNJ=yourkey (name up to 11 characters, no spaces). '
+                             'The key is not shown here.')
         if name in keys:
             raise ValueError(f'Channel "{name}" has two keys.')
         try:
