@@ -69,7 +69,7 @@ jobs:
             --icon build/sitdown.icns \
             --add-data "example_config.ini:." --add-data "assets:assets" \
             --hidden-import paho.mqtt.client --collect-all meshtastic \
-            --collect-all pubsub --hidden-import cryptography.hazmat.primitives.ciphers \
+            --collect-all pubsub \
             sitdown_desktop.py
           test -d "dist/The Sitdown BBS.app"
           test "$(lipo -archs 'dist/The Sitdown BBS.app/Contents/MacOS/The Sitdown BBS')" = "x86_64"
@@ -80,7 +80,10 @@ jobs:
           import os, plistlib, subprocess
           app = 'dist/The Sitdown BBS.app'
           out = subprocess.run([app + '/Contents/MacOS/The Sitdown BBS', '--sitdown-smoke-test'],
-                               check=True, timeout=45, capture_output=True, text=True).stdout
+                               timeout=45, capture_output=True, text=True)
+          if out.returncode:
+              raise SystemExit('Packaged smoke test failed:\n' + out.stdout[-2000:] + out.stderr[-4000:])
+          out = out.stdout
           expected = os.environ['SITDOWN_VERSION']
           assert f'SITDOWN_SMOKE_OK version={expected}' in out, out[-2000:]
           with open(app + '/Contents/Info.plist', 'rb') as f:

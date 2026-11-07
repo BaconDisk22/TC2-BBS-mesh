@@ -3,4 +3,3 @@ pypubsub
 
 pillow>=10,<14
 certifi
-cryptography>=42

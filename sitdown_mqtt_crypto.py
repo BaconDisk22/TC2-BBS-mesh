@@ -69,9 +69,8 @@ def nonce(packet_id, sender):
 
 def crypt(key, packet_id, sender, data):
     """AES-CTR in either direction (encrypt and decrypt are the same operation)."""
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    worker = Cipher(algorithms.AES(key), modes.CTR(nonce(packet_id, sender))).encryptor()
-    return worker.update(bytes(data)) + worker.finalize()
+    from sitdown_aes import ctr
+    return ctr(key, nonce(packet_id, sender), bytes(data))
 
 
 def channel_hash(name, key):
