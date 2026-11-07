@@ -62,20 +62,19 @@ Think old-school bulletin boards with a North Jersey attitude: diner coffee, Sun
 
 ## 🕵️ The Backroom — dashboard tools
 
-The desktop launcher includes a few handy tools for keeping tabs on the family business:
+The desktop app has a sidebar with four groups: **Overview** (Dashboard, Radio), **Mesh** (Chat, Nodes, Network), **BBS** (Mail, Boards, Broadcast) and **App** (Settings, About). Start or stop the server from the top-right button on any page. Dark and light themes and four text sizes are under **Settings → General**. Keyboard: ⌘1–⌘9 switch pages, ⌘, opens Settings, ⌘F searches the log. See [docs/UI_DESIGN_SYSTEM.md](docs/UI_DESIGN_SYSTEM.md).
 
 | Control | What it does |
 | --- | --- |
-| **Find in Log / Find Next** | Search the visible server activity log and jump to matching entries |
-| **Save Log** | Export the visible activity log as a UTF-8 text file for troubleshooting |
-| **Clear Log** | Clear the visible log without stopping the BBS process |
-| **Nodes / Who's Who** | Search the entire radio node database by ID or name, with available telemetry |
-| **Refresh USB Ports** | List detected serial devices and fill in the port when exactly one is available |
-| **Restart on crash** | Optionally restart the server process after an unexpected exit with capped exponential backoff |
-| **Radio activity** | Reports incoming Meshtastic messages observed in BBS logs without claiming a permanent connection |
-| **Chat / Direct messages** | CHAT has a tab per radio channel plus a ✉ tab per person. **NEW DIRECT MESSAGE** picks a heard node. For 10 minutes after you message someone, their plain replies come to your tab instead of the BBS menu (replies starting with `/` still reach the BBS); **END CONVERSATION** hands them back early. Ticks: ✓ relayed, ✓✓ delivered |
-| **MQTT channel text** | Enter a channel's key on the CentralNJ or SJMesh Settings tab (**Channel keys**, `Name=PSK`, e.g. `LongFast=AQ==`). Text on that channel then shows in a 🌐 CHAT tab. Channels without a key stay metadata only on The Wire. Keys stay in your local config (mode 600) and are never logged |
-| **MQTT sending** | Off by default. Tick **Allow sending** on a network's Settings tab (channel key + `msh/<region>/2/e/<channel>/+` topic required) and that 🌐 tab gets a SEND box. Messages are encrypted with the channel key and sent as your BBS radio's node id (or **Send as node id**). You confirm once per channel each session. ✓ on broker = the broker echoed it back. Radios hear it only if a gateway downlinks that channel |
+| **Dashboard** | Server status and controls, radio connection (USB or network, Find USB Ports, Check Radio Connection), MQTT network status with Connect/Disconnect, and the activity log |
+| **Activity log** | Search (Find), Expand to a large window, Save… to a text file, or Clear the view without stopping the server |
+| **Nodes** | Search the radio's node database by id or name, with telemetry |
+| **Restart after a crash** | Optionally restart the server after an unexpected exit, with a growing delay capped at a minute |
+| **Radio activity** | Shows when the radio last heard a packet, without claiming a permanent connection |
+| **Backups** | Settings → General → Back up now… / Verify a backup… |
+| **Chat / Direct messages** | Chat has a tab per radio channel plus a ✉ tab per person. **New direct message** picks a heard node. For 10 minutes after you message someone, their plain replies come to your tab instead of the BBS menu (replies starting with `/` still reach the BBS); **End conversation** hands them back early. Ticks: ✓ relayed, ✓✓ delivered |
+| **MQTT channel text** | Enter a channel's key on the CentralNJ or SJMesh Settings tab (**Channel keys**, `Name=PSK`, e.g. `LongFast=AQ==`). Text on that channel then shows in a 🌐 Chat tab. Channels without a key stay metadata only on the Network page. Keys stay in your local config (mode 600) and are never logged |
+| **MQTT sending** | Off by default. Tick **Allow sending** on a network's Settings tab (channel key + `msh/<region>/2/e/<channel>/+` topic required) and that 🌐 tab gets a Send box. Messages are encrypted with the channel key and sent as your BBS radio's node id (or **Send as node id**). You confirm once per channel each session. ✓ on broker = the broker echoed it back. Radios hear it only if a gateway downlinks that channel |
 
 **Validation scope:** The earlier version's two-way TCP radio test is historical evidence only. These staged changes and their packaged app require a fresh Intel Mac/radio test. Node snapshots are not continuous presence checks; backups do not yet support restore.
 

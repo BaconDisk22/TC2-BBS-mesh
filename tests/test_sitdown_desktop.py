@@ -210,7 +210,7 @@ class DesktopWindowTests(unittest.TestCase):
                         self.assertLessEqual(control.winfo_x() + control.winfo_width(), nav.winfo_width())
                         self.assertLessEqual(control.winfo_y() + control.winfo_height(), nav.winfo_height())
         for title in ("SETTINGS", "ABOUT"):
-            control = next(c for c in self.app.nav_buttons if c.cget("text").split()[-1] == title)
+            control = next(c for c in self.app.nav_buttons if c.page_name == title)
             control.event_generate("<Button-1>")
             self.root.update()
             self.assertIsNotNone(self.app.active_page)
@@ -242,7 +242,7 @@ class DesktopWindowTests(unittest.TestCase):
     def test_each_page_opens_in_demo_and_returns_home(self):
         self.app.demo.set(True)
         self.app.start()
-        for title in ('BBS', 'MESSAGES', 'BOARDS', 'RADIO', 'NODES', 'SETTINGS', 'ABOUT'):
+        for title in ('BBS', 'MESSAGES', 'BOARDS', 'RADIO', 'NODES', 'CHAT', 'WIRE', 'SETTINGS', 'ABOUT'):
             self.app.select_page(title)
             self.root.update()
             self.assertTrue(self.app.active_page.winfo_ismapped())
@@ -265,7 +265,7 @@ class DesktopWindowTests(unittest.TestCase):
         env.packet.to = 0xFFFFFFFF
         env.packet.encrypted = b'ciphertext'
         self.app.dual_mqtt = DualMQTTMonitors(configparser.ConfigParser())
-        self.app.select_page('BBS')
+        self.app.select_page('WIRE')
         self.root.update()
         self.app.dual_mqtt.receive('centralnj', env.SerializeToString())
         self.app.dual_mqtt.receive('centralnj', b'junk')
@@ -314,7 +314,7 @@ class DesktopWindowTests(unittest.TestCase):
                         self.assertTrue(bar.winfo_ismapped())
                         self.assertGreater(float(canvas.yview()[1]) - float(canvas.yview()[0]), 0)
             save = next(w for w in descendants(self.app.active_page)
-                        if isinstance(w, tk.Label) and w.cget('text').startswith('SAVE'))
+                        if isinstance(w, tk.Label) and w.cget('text') == 'Save changes')
             self.assertTrue(save.winfo_ismapped())
             self.assertLessEqual(save.winfo_rooty() + save.winfo_height(),
                                  self.root.winfo_rooty() + self.root.winfo_height())
@@ -351,7 +351,7 @@ class DesktopWindowTests(unittest.TestCase):
                 yield from descendants(child)
         widgets = list(descendants(self.app.active_page))
         self.assertEqual(len([w for w in widgets if isinstance(w, ttk.Entry)]), 2)
-        self.assertEqual(len([w for w in widgets if isinstance(w, tk.Label) and w.cget('text') == 'SEND']), 2)
+        self.assertEqual(len([w for w in widgets if isinstance(w, tk.Label) and w.cget('text') == 'Send']), 2)
         entry = next(w for w in widgets if isinstance(w, ttk.Entry))
         entry.insert(0, 'Ayyy é')
         self.root.update()
@@ -372,12 +372,12 @@ class DesktopWindowTests(unittest.TestCase):
         for text in ('one', 'two'):                       # CHAT closed: everything is unread
             self.app.chat_log.add(heard(text, 1))
             self.app.note_chat_message(heard(text, 1))
-        self.assertTrue(chat.cget('text').endswith('CHAT (2)'))
+        self.assertEqual(chat.cget('text'), chat.base_text + ' (2)')
         self.app.select_page('CHAT')                      # opens on Primary; CentralNJ still unread
         self.root.update()
         tabs = self.app.chat_tabs
         self.assertEqual(tabs.tab(self.app.chat_tab_frames[1], 'text'), 'CentralNJ (2)')
-        self.assertEqual(chat.cget('bg'), self.app.colors['primary'])   # still highlighted with a count
+        self.assertEqual(chat.cget('bg'), desktop.THEME['nav_selected'])   # still selected with a count
         self.app.note_chat_message(heard('on screen', 0))                # visible tab: not counted
         self.app.note_chat_message({**heard('mine', 1), 'mine': True})   # own message: not counted
         self.assertEqual(self.app.chat_unread[1], 2)
@@ -388,7 +388,7 @@ class DesktopWindowTests(unittest.TestCase):
         self.app.select_page('HOME')
         self.root.update()
         self.app.note_chat_message(heard('later', 1))
-        self.assertTrue(chat.cget('text').endswith('CHAT (1)'))
+        self.assertEqual(chat.cget('text'), chat.base_text + ' (1)')
 
     def test_direct_message_tab_opens_from_picker_and_counts_replies(self):
         from sitdown_dm import dm_event
@@ -413,7 +413,7 @@ class DesktopWindowTests(unittest.TestCase):
         self.assertEqual(tabs.select(), str(frame))
         self.assertEqual(tabs.tab(frame, 'text'), '✉ EDC')
         labels = [w.cget('text') for w in descendants(frame) if isinstance(w, tk.Label)]
-        self.assertIn('END CONVERSATION', labels)
+        self.assertIn('End conversation', labels)
         tabs.select(self.app.chat_tab_frames[0])
         self.root.update()
         reply = dm_event({'from': 0xb2c649cb, 'fromId': peer, 'to': 0x934cca70, 'rxTime': 1792626000,
@@ -425,6 +425,54 @@ class DesktopWindowTests(unittest.TestCase):
         self.assertEqual(tabs.tab(self.app.chat_tab_frames[f'dm:{peer}'], 'text'), '✉ EDC (1)')
         self.assertIn('thanks!', self.app.chat_views[f'dm:{peer}'][1].get('1.0', 'end'))
         self.assertEqual(tabs.select(), str(self.app.chat_tab_frames[0]))      # reader's tab kept
+
+    def test_theme_switch_rebuilds_keeping_page_log_and_settings(self):
+        self.app.log('marker line before switch')
+        self.app.select_page('NODES')
+        self.root.update()
+        self.app.appearance.set('light')
+        self.root.update()
+        self.assertEqual(self.app.current_page, 'NODES')
+        self.assertTrue(self.app.active_page.winfo_ismapped())
+        self.assertEqual(desktop.THEME['bg'], desktop.PALETTES['light']['bg'])
+        self.assertEqual(self.app.navigation.cget('bg'), desktop.PALETTES['light']['sidebar'])
+        self.assertIn('marker line before switch', self.app.output.get('1.0', 'end'))
+        self.assertIn('"appearance": "light"', desktop.CONFIG.read_text())
+        self.app.appearance.set('dark')
+        self.root.update()
+        self.assertEqual(desktop.THEME['bg'], desktop.PALETTES['dark']['bg'])
+
+    def test_text_size_scales_every_named_font_live(self):
+        body = self.app.ui.font('body')
+        before = body.cget('size')
+        self.app.text_size.set('larger')
+        self.root.update()
+        self.assertGreater(body.cget('size'), before)
+        self.assertGreater(self.app.ui.font('display').cget('size'), body.cget('size'))
+        self.app.text_size.set('default')
+        self.root.update()
+        self.assertEqual(body.cget('size'), before)
+
+    def test_first_run_banner_dismisses_for_good(self):
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        texts = lambda: [w.cget('text') for w in descendants(self.app.home_page) if isinstance(w, tk.Label)]
+        self.assertIn('New here?', texts())
+        dismiss = next(w for w in descendants(self.app.home_page) if isinstance(w, tk.Label) and w.cget('text') == 'Dismiss')
+        dismiss.event_generate('<Button-1>')
+        self.root.update()
+        self.assertNotIn('New here?', texts())
+        self.assertIn('"onboarded": true', desktop.CONFIG.read_text())
+
+    def test_sidebar_marks_the_open_page_and_header_follows(self):
+        for button in self.app.nav_buttons:
+            self.app.select_page(button.page_name)
+            self.root.update()
+            chosen = [b.page_name for b in self.app.nav_buttons if b.cget('bg') == desktop.THEME['nav_selected']]
+            self.assertEqual(chosen, [button.page_name])
+            self.assertEqual(self.app.page_title.get(), desktop.PAGE_INFO[button.page_name][0])
 
     def test_reply_from_new_node_adds_its_tab_while_chat_is_open(self):
         from sitdown_dm import dm_event
@@ -451,7 +499,7 @@ class DesktopWindowTests(unittest.TestCase):
                     yield child
                     yield from descendants(child)
             button = next(w for w in descendants(self.app.active_page)
-                          if isinstance(w, tk.Label) and w.cget('text').startswith('SAVE'))
+                          if isinstance(w, tk.Label) and w.cget('text') == 'Save changes')
             button.event_generate('<Button-1>')
             config = self.app.read_config()
             self.assertEqual(config.get('interface', 'hostname'), '192.0.2.10')
