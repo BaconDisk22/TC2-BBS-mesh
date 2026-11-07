@@ -26,6 +26,7 @@ PALETTES = {
         'success': '#3DC47E', 'warning': '#E8AE45', 'danger': '#F6767E', 'info': '#5AA6FF',
         'focus': '#7CB8FF', 'field': '#10151B', 'log_bg': '#0B0F14', 'log_text': '#C6F2D0',
         'brand_green': '#1FA05A', 'brand_white': '#F5F5F0', 'brand_red': '#E13232', 'selection': '#2B4A73',
+        'nav_selected': '#262E39',
     },
     'light': {
         'bg': '#F3F4F6', 'sidebar': '#E8EAEE', 'surface': '#FFFFFF', 'surface_alt': '#F5F6F8',
@@ -34,6 +35,7 @@ PALETTES = {
         'success': '#1B7F4B', 'warning': '#9A6200', 'danger': '#B92B34', 'info': '#1D63C2',
         'focus': '#1D63C2', 'field': '#FFFFFF', 'log_bg': '#FBFBFC', 'log_text': '#1D3A26',
         'brand_green': '#00843D', 'brand_white': '#1A1E24', 'brand_red': '#C11D2C', 'selection': '#CFE0F7',
+        'nav_selected': '#D5DAE2',
     },
 }
 
@@ -120,9 +122,10 @@ class UI:
         style = ttk.Style(self.root)
         style.theme_use('clam')
         style.configure('.', background=c['bg'], foreground=c['text'], font=self.fonts['body'])
-        style.configure('TNotebook', background=c['bg'], borderwidth=0, tabmargins=(0, 4, 0, 0))
-        style.configure('TNotebook.Tab', background=c['surface_alt'], foreground=c['muted'], borderwidth=0,
-                        padding=(14, 7), font=self.fonts['small'], focuscolor=c['focus'])
+        edges = dict(bordercolor=c['border'], lightcolor=c['border'], darkcolor=c['border'])
+        style.configure('TNotebook', background=c['bg'], borderwidth=1, tabmargins=(0, 4, 0, 0), **edges)
+        style.configure('TNotebook.Tab', background=c['surface_alt'], foreground=c['muted'], borderwidth=1,
+                        padding=(14, 7), font=self.fonts['small'], focuscolor=c['focus'], **edges)
         style.map('TNotebook.Tab', background=[('selected', c['surface']), ('active', c['raised'])],
                   foreground=[('selected', c['text']), ('active', c['text'])])
         style.configure('Card.TNotebook', background=c['surface'])
@@ -134,8 +137,11 @@ class UI:
                         arrowcolor=c['text'], bordercolor=c['border'], padding=6)
         style.map('TCombobox', fieldbackground=[('readonly', c['field'])], foreground=[('readonly', c['text'])],
                   bordercolor=[('focus', c['focus'])])
-        style.configure('Vertical.TScrollbar', background=c['raised'], troughcolor=c['surface'],
-                        bordercolor=c['surface'], arrowcolor=c['muted'], relief='flat')
+        for name in ('TScrollbar', 'Vertical.TScrollbar'):
+            style.configure(name, background=c['raised'], troughcolor=c['field'], bordercolor=c['field'],
+                            lightcolor=c['raised'], darkcolor=c['raised'], arrowcolor=c['muted'], gripcount=0,
+                            relief='flat')
+            style.map(name, background=[('active', c['border'])])
         self.root.option_add('*TCombobox*Listbox.background', c['field'])
         self.root.option_add('*TCombobox*Listbox.foreground', c['text'])
         self.root.option_add('*TCombobox*Listbox.selectBackground', c['selection'])
@@ -193,7 +199,7 @@ class UI:
                 for text, command, kind in reversed(actions):
                     self.button(head, text, command, kind, small=True).pack(side='right', padx=(SPACE['xs'], 0))
             if subtitle:
-                self.label(outer, subtitle, 'small', 'muted', bg='surface', wrap=520).pack(fill='x', pady=(0, SPACE['sm']))
+                fit_wrap(self.label(outer, subtitle, 'small', 'muted', bg='surface')).pack(fill='x', pady=(0, SPACE['sm']))
         body = tk.Frame(outer, bg=c['surface'])
         body.pack(fill='both', expand=True)
         return outer, body
@@ -228,8 +234,8 @@ class UI:
         row = tk.Frame(parent, bg=self.c[bg])
         tk.Label(row, text=icon, font=self.fonts['small'], fg=self.c[colour], bg=self.c[bg]).pack(side='left', anchor='n',
                                                                                                 padx=(0, SPACE['sm']))
-        tk.Label(row, text=text, font=self.fonts['small'], fg=self.c['muted'], bg=self.c[bg], wraplength=wrap,
-                 justify='left', anchor='w').pack(side='left', fill='x', expand=True)
+        fit_wrap(tk.Label(row, text=text, font=self.fonts['small'], fg=self.c['muted'], bg=self.c[bg], wraplength=wrap,
+                          justify='left', anchor='w')).pack(side='left', fill='x', expand=True)
         return row
 
     def toggle(self, parent, title, variable, help_text=None, bg='surface'):
@@ -237,18 +243,18 @@ class UI:
         c = self.c
         row = tk.Frame(parent, bg=c[bg])
         row.pack(fill='x', pady=SPACE['xs'])
-        text = tk.Frame(row, bg=c[bg])
-        text.pack(side='left', fill='x', expand=True)
-        tk.Label(text, text=title, font=self.fonts['body'], fg=c['text'], bg=c[bg], anchor='w',
-                 justify='left').pack(fill='x')
-        if help_text:
-            tk.Label(text, text=help_text, font=self.fonts['small'], fg=c['muted'], bg=c[bg], anchor='w',
-                     justify='left', wraplength=420).pack(fill='x')
         state = tk.Label(row, font=self.fonts['small'], fg=c['muted'], bg=c[bg], width=3)
         switch = tk.Canvas(row, width=40, height=22, bg=c[bg], highlightthickness=2, highlightbackground=c[bg],
                            highlightcolor=c['focus'], takefocus=True, cursor='hand2')
         switch.pack(side='right')
         state.pack(side='right', padx=(0, SPACE['xs']))
+        text = tk.Frame(row, bg=c[bg])
+        text.pack(side='left', fill='x', expand=True)
+        fit_wrap(tk.Label(text, text=title, font=self.fonts['body'], fg=c['text'], bg=c[bg], anchor='w',
+                          justify='left')).pack(fill='x')
+        if help_text:
+            fit_wrap(tk.Label(text, text=help_text, font=self.fonts['small'], fg=c['muted'], bg=c[bg], anchor='w',
+                              justify='left', wraplength=420)).pack(fill='x')
 
         def draw(*_):
             on = bool(variable.get())
@@ -361,6 +367,16 @@ class UI:
             text, command = action
             self.button(holder, text, command, 'primary', small=True, bg=bg).pack(anchor='w')
         return holder
+
+
+def fit_wrap(label, limit=640):
+    """Wrap a label to the width it is given, so text never runs past a narrow card."""
+    def resize(event):
+        width = max(80, min(limit, event.width - 4))
+        if int(label.cget('wraplength') or 0) != width:
+            label.configure(wraplength=width)
+    label.bind('<Configure>', resize)
+    return label
 
 
 META = re.compile(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}')

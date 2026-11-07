@@ -13,7 +13,7 @@ class PaletteTests(unittest.TestCase):
     def test_text_and_controls_meet_wcag_contrast(self):
         for mode, p in PALETTES.items():
             checks = [('text', 'surface', 7), ('text', 'bg', 7), ('muted', 'surface', 4.5), ('muted', 'bg', 4.5),
-                      ('muted', 'sidebar', 4.5), ('subtle', 'surface', 4.5), ('subtle', 'sidebar', 4.5),
+                      ('muted', 'sidebar', 4.5), ('text', 'nav_selected', 7), ('muted', 'nav_selected', 4.5), ('subtle', 'surface', 4.5), ('subtle', 'sidebar', 4.5),
                       ('on_accent', 'accent', 4.5), ('on_accent', 'accent_hover', 4.5), ('text', 'raised', 4.5),
                       ('danger', 'raised', 4.5), ('log_text', 'log_bg', 7), ('text', 'field', 7)]
             for state in ('success', 'warning', 'danger', 'info'):

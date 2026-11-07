@@ -377,7 +377,7 @@ class DesktopWindowTests(unittest.TestCase):
         self.root.update()
         tabs = self.app.chat_tabs
         self.assertEqual(tabs.tab(self.app.chat_tab_frames[1], 'text'), 'CentralNJ (2)')
-        self.assertEqual(chat.cget('bg'), desktop.THEME['raised'])   # still selected with a count
+        self.assertEqual(chat.cget('bg'), desktop.THEME['nav_selected'])   # still selected with a count
         self.app.note_chat_message(heard('on screen', 0))                # visible tab: not counted
         self.app.note_chat_message({**heard('mine', 1), 'mine': True})   # own message: not counted
         self.assertEqual(self.app.chat_unread[1], 2)
@@ -470,7 +470,7 @@ class DesktopWindowTests(unittest.TestCase):
         for button in self.app.nav_buttons:
             self.app.select_page(button.page_name)
             self.root.update()
-            chosen = [b.page_name for b in self.app.nav_buttons if b.cget('bg') == desktop.THEME['raised']]
+            chosen = [b.page_name for b in self.app.nav_buttons if b.cget('bg') == desktop.THEME['nav_selected']]
             self.assertEqual(chosen, [button.page_name])
             self.assertEqual(self.app.page_title.get(), desktop.PAGE_INFO[button.page_name][0])
 

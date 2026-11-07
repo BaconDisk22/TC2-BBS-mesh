@@ -705,9 +705,9 @@ class SitdownApp:
         self.current_page = title
         for button in self.nav_buttons:
             chosen = button.page_name == title
-            button.configure(bg=THEME['raised'] if chosen else THEME['sidebar'],
+            button.configure(bg=THEME['nav_selected'] if chosen else THEME['sidebar'],
                              fg=THEME['text'] if chosen else THEME['muted'],
-                             highlightbackground=THEME['raised'] if chosen else THEME['sidebar'])
+                             highlightbackground=THEME['nav_selected'] if chosen else THEME['sidebar'])
         name, subtitle = PAGE_INFO.get(title, (title.title(), ''))
         self.page_title.set(name)
         self.page_subtitle.set(subtitle)
