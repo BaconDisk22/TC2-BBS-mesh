@@ -400,6 +400,7 @@ class SitdownApp:
     def build_home(self):
         ui, c = self.ui, THEME
         self.home_page = tk.Frame(self.page_host, bg=c['bg'])
+        self._top_height = None
         self.home_page.grid(row=0, column=0, sticky='nsew')
         self.home_split = tk.PanedWindow(self.home_page, orient='vertical', bg=c['bg'], sashwidth=SPACE['sm'],
                                          sashrelief='flat', bd=0, showhandle=False)
