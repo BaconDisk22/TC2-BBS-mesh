@@ -25,7 +25,7 @@ from sitdown_restore_preflight import inspect_backup_archive
 from sitdown_errors import explain_transport_error
 from sitdown_monitor import ServerSupervisor
 from sitdown_mqtt_feed import MeshFeed, NETWORK_LABELS, format_stats
-from sitdown_chat import ChatLog, dm_peer, event_key, status_label
+from sitdown_chat import ChatLog, dm_peer, event_key, mqtt_room, status_label
 from sitdown_dm import peer_id
 from sitdown_version import VERSION
 from sitdown_personality import Personality
@@ -538,7 +538,14 @@ class SitdownApp:
         """(key, tab name) for each channel, then each direct conversation (this session's first)."""
         tabs = list(self.chat_channel_names().items())
         peers = list(dict.fromkeys(self.dm_peers + self.chat_log.peers()))
-        return tabs + [(f'dm:{peer}', self.dm_tab_name(peer)) for peer in peers]
+        rooms = [(key, self.room_tab_name(key)) for key in self.chat_log.rooms()]
+        return tabs + [(f'dm:{peer}', self.dm_tab_name(peer)) for peer in peers] + rooms
+
+    @staticmethod
+    def room_tab_name(key):
+        network, room = mqtt_room(key)
+        label = NETWORK_LABELS.get(network, network)
+        return '🌐 ' + (label if room == label else f'{label} · {room}')
 
     def chat_page(self, page):
         sending = ('Sending is ON for this session.' if self.centralnj_send_enabled.get() else
@@ -561,6 +568,13 @@ class SitdownApp:
             frame = tk.Frame(tabs, bg=THEME['panel'], padx=10, pady=10)
             tabs.add(frame, text=name)
             self.chat_tab_frames[index] = frame
+            if mqtt_room(index):
+                tk.Label(frame, text='Read only: text from the MQTT broker for a channel you have the key for.',
+                         bg=THEME['panel'], fg=THEME['highlight']).pack(side='bottom', anchor='w', pady=(6, 0))
+                box = self.page_text(frame, self.chat_log.render(index, name))
+                box.see('end')
+                self.chat_views[index] = (name, box)
+                continue
             compose = tk.Frame(frame, bg=THEME['panel'])
             compose.pack(side='bottom', fill='x', pady=(6, 0))
             draft = tk.StringVar()
@@ -682,15 +696,9 @@ class SitdownApp:
             return
         peer = event['peer']
         self.log(f'Direct message from {self.dm_tab_name(peer)[2:]} ({peer}) — see CHAT.')
-        if f'dm:{peer}' not in self.chat_views and self.chat_tabs is not None and self.chat_tabs.winfo_exists():
-            if peer not in self.dm_peers:
-                self.dm_peers.insert(0, peer)
-            showing = self.visible_chat_channel()
-            if showing is not None:
-                self.select_page('CHAT')            # redraw with the new tab, keeping the reader's tab
-                frame = self.chat_tab_frames.get(showing)
-                if frame is not None:
-                    self.chat_tabs.select(frame)
+        if peer not in self.dm_peers:
+            self.dm_peers.insert(0, peer)
+        self.add_chat_tab_if_new(f'dm:{peer}')
         self.note_chat_message(event)
 
     def dm_result(self, value):
@@ -775,6 +783,8 @@ class SitdownApp:
         if self.dual_mqtt is not None:
             for network, result in self.dual_mqtt.drain_events(limit=50):
                 self.mesh_feed.add(network, result)
+                if getattr(result, 'text', None) is not None:
+                    self.receive_mqtt_text(network, result)
         for network, box in self.wire_views.items():
             if not box.winfo_exists():
                 continue
@@ -787,6 +797,30 @@ class SitdownApp:
             box.insert('1.0', text)
             box.configure(state='disabled')
             box.yview_moveto(top)
+
+    def receive_mqtt_text(self, network, result):
+        """Channel text opened with the operator's key goes to that channel's CHAT tab."""
+        s = result.summary
+        event = {'type': 'mqtt', 'network': network, 'room': s.channel_id, 'from': f'!{s.from_id:08x}',
+                 'short': result.short, 'long': result.long, 'text': result.text,
+                 'rx_time': int(time.time()), 'mine': False}
+        if not self.chat_log.add(event):
+            return
+        self.add_chat_tab_if_new(event_key(event))
+        self.note_chat_message(event)
+
+    def add_chat_tab_if_new(self, key):
+        """Redraw an open CHAT page so a new conversation gets its tab, keeping the reader's tab."""
+        tabs = self.chat_tabs
+        if key in self.chat_views or tabs is None or not tabs.winfo_exists():
+            return
+        showing = self.visible_chat_channel()
+        if showing is None:
+            return
+        self.select_page('CHAT')
+        frame = self.chat_tab_frames.get(showing)
+        if frame is not None:
+            self.chat_tabs.select(frame)
 
     def start_opted_in_mqtt(self):
         """Only explicitly enabled and auto-connect profiles may open broker sessions."""
@@ -845,8 +879,8 @@ class SitdownApp:
             'announcements': [('admin_nodes', 'Remote administrator node IDs (comma separated)', '')],
             'weather': [('internet_enabled', 'Enable internet weather', 'bool'), ('local_report', 'Offline report (include time)', ''), ('latitude', 'Latitude', '40.20'), ('longitude', 'Longitude', '-74.50')],
             'mqtt_monitor': [('enabled', 'Enable MQTT counter', 'bool'), ('host', 'Broker hostname', ''), ('topic', 'Subscription topic', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', '')],
-            'mqtt_centralnj': [('enabled', 'Enable CentralNJ monitor', 'bool'), ('auto_connect', 'Auto-connect CentralNJ at startup', 'bool'), ('host', 'Broker hostname', 'mqtt.meshtastic.org'), ('topic', 'Topics (up to 4, comma-separated): exact, or msh/<region>/2/e/<channel>/+', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', '')],
-            'mqtt_sjmesh': [('enabled', 'Enable SJMesh monitor', 'bool'), ('auto_connect', 'Auto-connect SJMesh at startup', 'bool'), ('host', 'Broker hostname', 'mqtt.sjmesh.net'), ('topic', 'Topics (up to 4, comma-separated): exact, or msh/<region>/2/e/<channel>/+', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', '')],
+            'mqtt_centralnj': [('enabled', 'Enable CentralNJ monitor', 'bool'), ('auto_connect', 'Auto-connect CentralNJ at startup', 'bool'), ('host', 'Broker hostname', 'mqtt.meshtastic.org'), ('topic', 'Topics (up to 4, comma-separated): exact, or msh/<region>/2/e/<channel>/+', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', ''), ('channel_keys', 'Channel keys to read text (Name=PSK, comma-separated, e.g. CentralNJ=base64key)', '')],
+            'mqtt_sjmesh': [('enabled', 'Enable SJMesh monitor', 'bool'), ('auto_connect', 'Auto-connect SJMesh at startup', 'bool'), ('host', 'Broker hostname', 'mqtt.sjmesh.net'), ('topic', 'Topics (up to 4, comma-separated): exact, or msh/<region>/2/e/<channel>/+', ''), ('tls', 'Use TLS', 'bool_true'), ('port', 'Port', '8883'), ('username', 'Username', ''), ('password', 'Password', ''), ('channel_keys', 'Channel keys to read text (Name=PSK, comma-separated, e.g. LongFast=AQ==)', '')],
             'personality': [('public_mode', 'Public greeting: clean / attitude / uncensored', 'clean'), ('allow_public_profanity', 'Allow profanity in generated public greetings', 'bool')],
         }
         for section, entries in sections.items():
@@ -865,7 +899,7 @@ class SitdownApp:
                     var = tk.StringVar(value=config.get(section, key, fallback=default))
                     tk.Label(frame, text=label, bg=THEME['panel'], fg=THEME['text'], wraplength=300,
                              justify='left').grid(row=row, column=0, sticky='w', padx=(0, 14), pady=3)
-                    ttk.Entry(frame, textvariable=var, show='*' if key == 'password' else '',
+                    ttk.Entry(frame, textvariable=var, show='*' if key in ('password', 'channel_keys') else '',
                               style='Desk.TEntry').grid(row=row, column=1, sticky='ew', pady=3)
                 fields[(section, key)] = var
         def save():
@@ -899,6 +933,11 @@ class SitdownApp:
                                              'msh/<region>/2/e/<channel>/+ for one channel. No other wildcards.')
                         if not 1 <= config.getint(section, 'port') <= 65535:
                             raise ValueError(f'{section}: port must be 1–65535.')
+                    from sitdown_mqtt_crypto import parse_channel_keys
+                    try:
+                        parse_channel_keys(config.get(section, 'channel_keys', fallback=''))
+                    except ValueError as exc:
+                        raise ValueError(f'{section} channel keys: {exc}') from None
                 path = self.config_path()
                 path.parent.mkdir(parents=True, exist_ok=True)
                 temporary = path.with_suffix('.ini.tmp')
@@ -1546,6 +1585,8 @@ if __name__ == "__main__":
         import tempfile
         import server
         import paho.mqtt.client
+        from sitdown_mqtt_crypto import DEFAULT_KEY, crypt
+        assert crypt(DEFAULT_KEY, 1, 2, crypt(DEFAULT_KEY, 1, 2, b'smoke')) == b'smoke'
         with tempfile.TemporaryDirectory() as folder:
             DATA = Path(folder)
             CONFIG = DATA / 'launcher.json'
@@ -1553,7 +1594,7 @@ if __name__ == "__main__":
             app = SitdownApp(root)
             app.demo.set(True)
             app.start()
-            for page in ('BBS', 'MESSAGES', 'BOARDS', 'NODES', 'SETTINGS', 'HOME'):
+            for page in ('BBS', 'MESSAGES', 'BOARDS', 'NODES', 'CHAT', 'SETTINGS', 'HOME'):
                 app.select_page(page)
                 root.update()
                 if page == 'HOME':

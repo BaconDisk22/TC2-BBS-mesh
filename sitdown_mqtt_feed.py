@@ -1,7 +1,7 @@
 """Per-network, bounded receive-only MQTT activity for the desktop.
 
-Shows packet metadata only. Message content is never decrypted, inferred,
-or displayed, and nothing here can publish or forward to a radio.
+Shows packet metadata only. Channel text opened with an operator-supplied key
+is shown in CHAT, not here, and nothing here can publish or forward to a radio.
 """
 import time
 from collections import deque
@@ -44,8 +44,15 @@ def format_entry(entry):
     if not result.accepted:
         return f'{stamp}  REJECTED — {result.reason}'
     s = result.summary
-    state = ('ENCRYPTED — not decrypted' if s.encrypted
-             else f'{port_label(s.portnum)} — content not displayed')
+    if getattr(result, 'text', None) is not None:
+        state = 'TEXT_MESSAGE_APP — opened with channel key, shown in CHAT'
+    elif getattr(s, 'decrypted', False):
+        state = f'{port_label(s.portnum)} — opened with channel key, content not displayed'
+    elif s.encrypted:
+        state = 'ENCRYPTED — no key for this channel'
+    else:
+        state = f'{port_label(s.portnum)} — content not displayed'
+
     return (f'{stamp}  from {node_label(s.from_id)} → {node_label(s.to_id)}'
             f'  ch {s.channel_id}  via {s.gateway_id or "unknown gateway"}\n    {state}')
 
@@ -70,7 +77,8 @@ class MeshFeed:
         rows = self.entries(network)
         header = (f'{NETWORK_LABELS[network]} — receive-only MQTT activity, newest first '
                   f'(last {len(rows)}).\nMetadata only: sender, channel, gateway, time received, '
-                  'encryption state.\nMQTT activity is not radio RX and is never forwarded.\n')
+                  'encryption state. Channel text you have a key for appears in CHAT.\n'
+                  'MQTT activity is not radio RX and is never forwarded.\n')
         if status is not None:
             header += f'Connection: {status}\n'
         if stats is not None:
