@@ -474,6 +474,27 @@ class DesktopWindowTests(unittest.TestCase):
             self.assertEqual(chosen, [button.page_name])
             self.assertEqual(self.app.page_title.get(), desktop.PAGE_INFO[button.page_name][0])
 
+    def test_nodes_page_lists_saved_nodes_beyond_the_radio_list(self):
+        self.app.node_directory.record_mqtt('centralnj', 0x0000abcd, 'MQ', 'Heard on MQTT')
+        self.app.snapshot = {**self.app.snapshot, 'nodes': [{'id': '!00000001', 'shortName': 'R1', 'longName': 'Radio one',
+                                                             'lastHeard': int(desktop.time.time())}]}
+        self.app.record_radio_nodes(self.app.snapshot['nodes'])
+        self.app.select_page('NODES')
+        self.root.update()
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        box = next(w for w in descendants(self.app.active_page) if isinstance(w, tk.Text))
+        text = box.get('1.0', 'end')
+        self.assertIn('Heard on MQTT', text)
+        self.assertIn('in radio list', text)
+        labels = [w.cget('text') for w in descendants(self.app.active_page) if isinstance(w, tk.Label)]
+        self.assertTrue(any('2 saved on this Mac' in str(l) for l in labels) or
+                        '2 saved on this Mac' in self.root.globalgetvar(next(
+                            w for w in descendants(self.app.active_page)
+                            if isinstance(w, tk.Label) and w.cget('textvariable')).cget('textvariable')))
+
     def test_reply_from_new_node_adds_its_tab_while_chat_is_open(self):
         from sitdown_dm import dm_event
         self.app.select_page('CHAT')

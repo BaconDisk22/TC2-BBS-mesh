@@ -10,7 +10,6 @@ from sitdown_status_view import format_operator_status
 import configparser
 import sqlite3
 from tkinter import ttk
-from sitdown_utilities import format_node
 from sitdown_online import WeatherDesk, ActivityCounter
 import runpy
 import shutil
@@ -29,6 +28,7 @@ from sitdown_chat import ChatLog, dm_peer, event_key, mqtt_room, status_label
 from sitdown_dm import peer_id
 from sitdown_mqtt_crypto import safe_channel_keys
 from sitdown_mqtt_sender import MQTTSender, send_rooms
+from sitdown_nodedir import NodeDirectory, format_entry
 from sitdown_version import VERSION
 from sitdown_personality import Personality
 from sitdown_ui import PALETTES, SPACE, UI, set_text
@@ -167,6 +167,7 @@ class SitdownApp:
         self.wire_views = {}
         # Beside launcher.json so tests that redirect CONFIG never touch real history.
         self.chat_log = ChatLog(path=CONFIG.with_name('chat-history.json'))
+        self.node_directory = self.open_node_directory()
         self.chat_views = {}
         self.chat_confirmed = set()
         self.chat_unread = Counter()
@@ -181,7 +182,8 @@ class SitdownApp:
         self.restart_at = None
         self.retry_count = 0
         self.auto_restart = tk.BooleanVar(value=False)
-        self.node_count = tk.StringVar(value='Known nodes: 0')
+        saved = self.directory().count() if getattr(self, 'node_directory', None) is not None else 0
+        self.node_count = tk.StringVar(value=f'Known nodes: {saved} saved')
         self.uptime = tk.StringVar(value='Uptime: 0s')
         self.radio_activity = tk.StringVar(value='Radio activity: Not observed')
         self.traffic = tk.StringVar(value='Messages observed: RX 0 / TX 0')
@@ -817,31 +819,47 @@ class SitdownApp:
                       'ghost', small=True).grid(row=row, column=2, sticky='e')
 
     def nodes_page(self, page):
+        """Every node the app has learned about, not just the radio's limited list."""
         ui, c = self.ui, THEME
         query = tk.StringVar()
+        period = tk.StringVar(value='day')
+        source = tk.StringVar(value='all')
         bar = self.toolbar(page)
-        search = ui.entry(bar, query, width=40)
+        search = ui.entry(bar, query, width=32)
         search.pack(side='left')
+        ui.segmented(bar, period, (('1 hour', 'hour'), ('24 hours', 'day'), ('7 days', 'week'), ('All', 'all')),
+                     bg='bg').pack(side='left', padx=(SPACE['md'], 0))
+        ui.segmented(bar, source, (('Anywhere', 'all'), ('Radio', 'radio'), ('MQTT', 'mqtt')),
+                     bg='bg').pack(side='left', padx=(SPACE['sm'], 0))
         count = tk.StringVar()
-        tk.Label(bar, textvariable=count, font=ui.font('small'), fg=c['muted'], bg=c['bg']).pack(side='left',
-                                                                                              padx=SPACE['md'])
-        ui.button(bar, 'Refresh', lambda: self.select_page('NODES'), 'ghost', small=True, bg='bg').pack(side='right')
-        ui.label(page, 'Search by node id (like !1234abcd), short name or long name. The list is the snapshot from the '
-                 'last time the server was running.', 'small', 'muted').pack(fill='x')
+        tk.Label(page, textvariable=count, font=ui.font('small'), fg=c['muted'], bg=c['bg'], anchor='w').pack(fill='x')
         box = self.page_text(page, '')
+        spans = {'hour': 3600, 'day': 86400, 'week': 7 * 86400, 'all': None}
 
         def refresh(*_):
-            from sitdown_utilities import node_id
-            key = query.get().strip().casefold()
-            nodes = self.snapshot['nodes']
-            rows = [row for row in nodes if not key or node_id(key) == row['id']
-                    or key in (row['shortName'] + ' ' + row['longName']).casefold()]
-            count.set(f'{len(rows)} of {len(nodes)} nodes')
-            text = '\n\n'.join(format_node(row) for row in rows) or (
-                'No nodes match your search.' if nodes else
-                'No nodes yet. Start the BBS server to load the radio\'s node list.')
-            set_text(box, text)
-        query.trace_add('write', refresh)
+            now = int(time.time())
+            span = spans[period.get()]
+            radio = [row for row in self.snapshot.get('nodes') or [] if isinstance(row, dict)]
+            radio_ids = {row.get('id') for row in radio}
+            try:
+                total, rows = self.directory().search(query.get(), None if span is None else now - span,
+                                                      source.get(), limit=500)
+                saved = self.directory().count()
+            except sqlite3.Error as exc:
+                set_text(box, 'Could not read the node list: ' + str(exc))
+                return
+            shown = f'Showing {len(rows)} of {total}' if total > len(rows) else f'{total} node{"s" if total != 1 else ""}'
+            count.set(f'{shown} · {saved} saved on this Mac · your radio holds {len(radio)} '
+                      '(radios forget the oldest when full; this list keeps them)')
+            if rows:
+                set_text(box, '\n\n'.join(format_entry(row, now, radio_ids) for row in rows))
+            elif saved:
+                set_text(box, 'No nodes match. Try a longer time range or a different search.')
+            else:
+                set_text(box, 'No nodes yet. Start the BBS server or connect an MQTT network, and nodes '
+                              'will collect here as they are heard.')
+        for variable in (query, period, source):
+            variable.trace_add('write', refresh)
         refresh()
         search.focus_set()
 
@@ -1188,8 +1206,10 @@ class SitdownApp:
         if self.dual_mqtt is not None:
             for network, result in self.dual_mqtt.drain_events(limit=50):
                 self.mesh_feed.add(network, result)
+                self.record_mqtt_node(network, result)
                 if getattr(result, 'text', None) is not None and not self.own_mqtt_echo(network, result):
                     self.receive_mqtt_text(network, result)
+            self.flush_mqtt_nodes()
         for network, box in self.wire_views.items():
             if not box.winfo_exists():
                 continue
@@ -1202,6 +1222,53 @@ class SitdownApp:
             box.insert('1.0', text)
             box.configure(state='disabled')
             box.yview_moveto(top)
+
+    def open_node_directory(self):
+        """The desktop's own node list beside the other app files; in memory if the file can't be opened."""
+        try:
+            CONFIG.parent.mkdir(parents=True, exist_ok=True)
+            return NodeDirectory(CONFIG.with_name('node-directory.db'))
+        except (OSError, sqlite3.Error):
+            return NodeDirectory()
+
+    def directory(self):
+        found = getattr(self, 'node_directory', None)
+        if found is None:
+            found = self.node_directory = NodeDirectory()
+        return found
+
+    def record_radio_nodes(self, nodes):
+        """Merge the radio's (size-limited) node list into the desktop directory and update the counts."""
+        nodes = nodes or []
+        try:
+            self.directory().record_radio(nodes)
+            total = self.directory().count()
+        except sqlite3.Error:
+            total = len(nodes)
+        total = max(total, len(nodes))
+        self.node_count.set(f'Known nodes: {total}' + (f' (radio holds {len(nodes)})' if total > len(nodes) else ''))
+
+    def record_mqtt_node(self, network, result):
+        """Any accepted MQTT packet tells us its sender exists; NODEINFO also gives names."""
+        summary = getattr(result, 'summary', None)
+        if not getattr(result, 'accepted', False) or summary is None or summary.from_id in (0, 0xFFFFFFFF):
+            return
+        pending = self.__dict__.setdefault('_mqtt_sightings', {})
+        key = (network, summary.from_id)
+        names = (getattr(result, 'short', '') or '', getattr(result, 'long', '') or '')
+        if names[0] or names[1] or key not in pending:
+            pending[key] = names
+
+    def flush_mqtt_nodes(self):
+        """Write this poll's MQTT sightings in one transaction."""
+        pending = self.__dict__.get('_mqtt_sightings')
+        if not pending:
+            return
+        self._mqtt_sightings = {}
+        try:
+            self.directory().record_mqtt_many([(n, number, s, l) for (n, number), (s, l) in pending.items()])
+        except sqlite3.Error:
+            pass
 
     def own_mqtt_echo(self, network, result):
         """Our own sent message coming back from the broker marks it '✓ on broker' instead of a new message."""
@@ -1808,7 +1875,7 @@ class SitdownApp:
                         self.snapshot = value
                         if value.get('me'):
                             self.radio_node = value['me']      # kept for MQTT sends after the server stops
-                        self.node_count.set(f"Known nodes: {len(value.get('nodes') or [])}")
+                        self.record_radio_nodes(value.get('nodes'))
                     elif value.get('type') == 'chat':
                         if self.chat_log.add(value):
                             self.note_chat_message(value)
