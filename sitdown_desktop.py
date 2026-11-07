@@ -1843,8 +1843,12 @@ class SitdownApp:
                 self.uptime.set(f"Uptime: {monitor.uptime_seconds()}s")
             elif not monitor.stopping and self.restart_at is None:
                 code = monitor.process.poll() if monitor.process else "unknown"
-                self.log(f"BBS process exited ({code}).")
-                self.status.set("Disconnected / process stopped")
+                if code == 2:
+                    self.log("BBS server stopped: it couldn't reach the radio (see the line above).")
+                    self.status.set("Can't reach radio")
+                else:
+                    self.log(f"BBS process exited ({code}).")
+                    self.status.set("Disconnected / process stopped")
                 self.link_warning.set("Radio: not connected (server stopped)")
                 self.schedule_recovery()
                 self.supervisor = None

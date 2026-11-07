@@ -61,7 +61,8 @@ def contrast(foreground, background):
 def state_of(text):
     """Map a human status line to a visual state. Colour is always paired with a symbol and words."""
     value = (text or '').lower()
-    if any(word in value for word in ('fail', 'error', 'refused', 'unavailable', 'exited', 'crash', 'disconnected')):
+    if any(word in value for word in ('fail', 'error', 'refused', 'unavailable', 'exited', 'crash', 'disconnected',
+                                      "can't reach")):
         return 'error'
     if value.strip() == 'off' or any(word in value for word in ('not connected', 'stopped', ': off', 'cancelled')):
         return 'idle'

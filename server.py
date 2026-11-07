@@ -29,6 +29,10 @@ from message_processing import on_receive
 from pubsub import pub
 from sitdown_utilities import LocalUtilities
 from sitdown_link import RadioLinkMonitor
+from sitdown_errors import explain_transport_error
+
+# Exit code the desktop reads as "could not reach the radio" (not a crash).
+EXIT_RADIO_UNREACHABLE = 2
 
 # General logging
 logging.basicConfig(
@@ -53,6 +57,17 @@ def display_banner():
     print("Meshtastic bulletin board server")
 
 
+def describe_connect_failure(exc, system_config):
+    """One plain line for a failed radio connection; keeps the OS reason so the desktop can match it."""
+    if system_config.get('interface_type') == 'tcp':
+        where = f"at {system_config.get('hostname') or 'no address set'} (network)"
+    else:
+        where = f"on {system_config.get('port') or 'the USB port'} (USB)"
+    reason = getattr(exc, 'strerror', None) or str(exc) or type(exc).__name__
+    return (f"Can't reach your radio {where}: {reason}. "
+            f"{explain_transport_error(reason, system_config.get('interface_type', 'serial'))}")
+
+
 def main():
     display_banner()
     args = init_cli_parser()
@@ -63,7 +78,11 @@ def main():
 
     merge_config(system_config, args)
 
-    interface = get_interface(system_config)
+    try:
+        interface = get_interface(system_config)
+    except (OSError, ValueError) as exc:
+        logging.error(describe_connect_failure(exc, system_config))
+        return EXIT_RADIO_UNREACHABLE
     interface.bbs_nodes = system_config['bbs_nodes']
     interface.allowed_nodes = system_config['allowed_nodes']
     interface.sitdown = LocalUtilities(interface, system_config['config'],
