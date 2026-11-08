@@ -14,6 +14,8 @@ from sitdown_mqtt_envelope import decode_service_envelope
 BROADCAST = 0xFFFFFFFF
 TEXT_PORT = 1
 NODEINFO_PORT = 4
+POSITION_PORT = 3
+TELEMETRY_PORT = 67
 MAX_TEXT = 500
 MAX_NAMES = 2000
 
@@ -27,6 +29,31 @@ class ProcessingResult:
     text: str = None
     short: str = ''
     long: str = ''
+    details: dict = None        # latitude/longitude/battery from POSITION and TELEMETRY packets
+
+
+def node_details(data):
+    """Position or battery from an opened packet, checked for sane ranges; None for other ports."""
+    try:
+        if data.portnum == POSITION_PORT:
+            from meshtastic.protobuf import mesh_pb2
+            position = mesh_pb2.Position.FromString(bytes(data.payload))
+            if not (position.HasField('latitude_i') and position.HasField('longitude_i')):
+                return None
+            latitude, longitude = position.latitude_i / 1e7, position.longitude_i / 1e7
+            if not (-90 <= latitude <= 90 and -180 <= longitude <= 180) or (latitude == 0 and longitude == 0):
+                return None
+            return {'latitude': latitude, 'longitude': longitude}
+        if data.portnum == TELEMETRY_PORT:
+            from meshtastic.protobuf import telemetry_pb2
+            telemetry = telemetry_pb2.Telemetry.FromString(bytes(data.payload))
+            if telemetry.HasField('device_metrics') and telemetry.device_metrics.HasField('battery_level'):
+                level = telemetry.device_metrics.battery_level
+                if 0 <= level <= 101:
+                    return {'battery': level}
+    except Exception:
+        return None
+    return None
 
 
 class MQTTMessagePipeline:
@@ -59,7 +86,8 @@ class MQTTMessagePipeline:
             self.remember_names(network, summary.from_id, data.payload)
         if data.portnum != TEXT_PORT or summary.to_id != BROADCAST:
             short, long = self.names(network, summary.from_id) if data.portnum == NODEINFO_PORT else ('', '')
-            return ProcessingResult(True, 'Opened with channel key', network, summary, short=short, long=long)
+            return ProcessingResult(True, 'Opened with channel key', network, summary, short=short, long=long,
+                                    details=node_details(data))
         text = bytes(data.payload).decode('utf-8', errors='replace')[:MAX_TEXT]
         short, long = self.names(network, summary.from_id)
         return ProcessingResult(True, 'Channel text', network, summary, text=text, short=short, long=long)
