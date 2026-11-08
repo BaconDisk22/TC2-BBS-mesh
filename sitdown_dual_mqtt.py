@@ -10,7 +10,7 @@ from collections import Counter
 from threading import Lock
 from sitdown_mqtt_event_queue import MQTTEventQueue
 from sitdown_mqtt_pipeline import MQTTMessagePipeline
-from sitdown_mqtt_crypto import safe_channel_keys
+from sitdown_mqtt_crypto import keys_for_topics
 from sitdown_online import ActivityCounter, topic_list
 
 NETWORKS = {
@@ -48,7 +48,8 @@ def topics_allowed(value):
 
 def channel_keys(source):
     """{network: {channel name: key}} from each profile's channel_keys setting."""
-    return {name: safe_channel_keys(source.get(section, 'channel_keys', fallback=''))
+    return {name: keys_for_topics(source.get(section, 'channel_keys', fallback=''),
+                                  source.get(section, 'topic', fallback=''))
             for name, (section, _host) in NETWORKS.items()}
 
 
