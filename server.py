@@ -21,6 +21,7 @@ from pathlib import Path
 from sitdown_control import start_reader, snapshot, handle, emit
 from sitdown_chat import chat_event
 from sitdown_dm import claim_reply
+from sitdown_nodedir import directory_path
 
 from config_init import initialize_config, get_interface, init_cli_parser, merge_config
 from db_operations import initialize_database
@@ -87,6 +88,7 @@ def main():
     interface.allowed_nodes = system_config['allowed_nodes']
     interface.sitdown = LocalUtilities(interface, system_config['config'],
         state_path=Path(config_file or 'config.ini').resolve().with_name('sitdown-broadcasts.db'))
+    interface.sitdown.node_directory_path = directory_path(config_file or 'config.ini')
 
     logging.info(f"THE SITDOWN BBS is running on {system_config['interface_type']} interface...")
 
