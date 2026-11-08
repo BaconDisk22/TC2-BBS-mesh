@@ -21,6 +21,7 @@ import tkinter as tk
 from tkinter import messagebox, filedialog
 from sitdown_backup import create_backup_archive
 from sitdown_restore_preflight import inspect_backup_archive
+from sitdown_restore import RESTORABLE, restore_backup_archive, restore_plan
 from sitdown_errors import explain_transport_error
 from sitdown_monitor import ServerSupervisor
 from sitdown_mqtt_feed import MeshFeed, NETWORK_LABELS, format_stats
@@ -1440,12 +1441,14 @@ class SitdownApp:
                   'and each channel still asks you once.')
         ui.button(body, 'Check send safety', self.check_centralnj_send_safety, 'ghost', small=True).pack(anchor='w')
         ui.section(body, 'Backups')
-        ui.label(body, 'A backup holds your settings and BBS databases (mail, boards). It may contain messages and '
-                 'keys, so keep it private.', 'small', 'muted', bg='surface', wrap=620).pack(fill='x')
+        ui.label(body, 'A backup holds your settings, chat history, saved node list and BBS databases (mail, '
+                 'boards). It may contain messages and keys, so keep it private. Restoring saves a safety copy of '
+                 'your current files first.', 'small', 'muted', bg='surface', wrap=620).pack(fill='x')
         line = tk.Frame(body, bg=c['surface'])
         line.pack(fill='x', pady=(SPACE['sm'], 0))
         ui.button(line, 'Back up now…', self.backup, small=True).pack(side='left')
         ui.button(line, 'Verify a backup…', self.verify_backup, 'ghost', small=True).pack(side='left', padx=SPACE['xs'])
+        ui.button(line, 'Restore from backup…', self.restore_backup, 'ghost', small=True).pack(side='left')
         ui.section(body, 'Troubleshooting')
         line = tk.Frame(body, bg=c['surface'])
         line.pack(fill='x')
@@ -2067,12 +2070,66 @@ class SitdownApp:
             return
         try:
             database_paths = set(DATA.glob("*.db")) | set(self.config_path().parent.glob("*.db"))
-            create_backup_archive(destination, [CONFIG, self.config_path()], sorted(database_paths))
+            create_backup_archive(destination, [CONFIG, self.config_path(), CONFIG.with_name('chat-history.json')],
+                                  sorted(database_paths))
         except (OSError, ValueError, sqlite3.DatabaseError, zipfile.BadZipFile) as exc:
             self.log(f"The Books: backup failed: {exc}")
             self.show_info("Backup failed", f"No new backup was saved. {exc}")
             return
         self.log("The Books: verified backup saved. Treat backups as sensitive; they may contain messages and keys.")
+
+    def restore_targets(self):
+        """Where each restorable file lives on this Mac."""
+        targets = {'launcher.json': CONFIG, 'config.ini': self.config_path(),
+                   'chat-history.json': CONFIG.with_name('chat-history.json'),
+                   'node-directory.db': CONFIG.with_name('node-directory.db'),
+                   'bulletins.db': self.config_path().parent / 'bulletins.db',
+                   'sitdown-broadcasts.db': self.config_path().parent / 'sitdown-broadcasts.db'}
+        return {name: Path(path) for name, path in targets.items() if name in RESTORABLE}
+
+    def restore_backup(self):
+        """Replace the app's files with a verified backup, after saving a safety copy of the current ones."""
+        if self.supervisor and self.supervisor.running:
+            if not messagebox.askyesno('Stop the server to restore?', 'Restoring replaces the BBS databases, so '
+                                       'the server has to stop first. Stop it now?', parent=self.root):
+                return
+            self.stop()
+        selected = filedialog.askopenfilename(title='Restore from a backup', filetypes=[('Zip archive', '*.zip')])
+        if not selected:
+            return
+        targets = self.restore_targets()
+        try:
+            restore, skipped = restore_plan(selected, targets)
+        except (OSError, ValueError, sqlite3.DatabaseError, zipfile.BadZipFile, RuntimeError, EOFError) as exc:
+            self.log(f'Restore not started: the backup did not pass checks ({exc}).')
+            self.show_info('Backup not restored', 'That backup did not pass its checks, so nothing was changed. '
+                           'Details are in the activity log.')
+            return
+        listing = '\n'.join(f'• {name}' for name in restore)
+        if not messagebox.askyesno('Restore this backup?', f'These files on this Mac will be replaced:\n{listing}\n\n'
+                                   'A safety copy of the current files is saved first, next to your settings.',
+                                   parent=self.root):
+            return
+        directory = getattr(self, 'node_directory', None)
+        if directory is not None:
+            directory.close()                       # release the node list file before swapping it
+        try:
+            result = restore_backup_archive(selected, targets, DATA / 'restore-safety-copies')
+        except (OSError, ValueError, sqlite3.DatabaseError, zipfile.BadZipFile) as exc:
+            self.node_directory = self.open_node_directory()
+            self.log(f'Restore failed: {exc}')
+            self.show_info('Restore failed', f'{exc}. Files already replaced keep the backup version; the safety '
+                           'copy has the previous ones.')
+            return
+        self.node_directory = self.open_node_directory()
+        self.chat_log = ChatLog(path=CONFIG.with_name('chat-history.json'))
+        self.load()
+        self.log(f"Restored {len(result['restored'])} files from {Path(selected).name}."
+                 + (f" Skipped: {', '.join(result['skipped'])}." if result['skipped'] else ''))
+        safety = f"\n\nYour previous files are in {result['safety']}." if result['safety'] else ''
+        self.show_info('Backup restored', f"Restored {len(result['restored'])} files.{safety}\n\n"
+                       'Start the server to use the restored settings and databases.')
+        self.select_page(self.current_page)
 
     def verify_backup(self):
         """Read-only validation of a selected archive; never restores live files."""
