@@ -71,12 +71,12 @@ The desktop app has a sidebar with four groups: **Overview** (Dashboard, Radio),
 | **Nodes** | Every node the app has heard, by radio or on MQTT, saved on your Mac (`~/.sitdown-bbs/node-directory.db`, up to 20,000). Your radio can only remember about 100 and forgets the oldest; this list keeps them. Filter by 1 hour / 24 hours / 7 days / All and by Radio or MQTT |
 | **Restart after a crash** | Optionally restart the server after an unexpected exit, with a growing delay capped at a minute |
 | **Radio activity** | Shows when the radio last heard a packet, without claiming a permanent connection |
-| **Backups** | Settings → General → Back up now… / Verify a backup… |
+| **Backups** | Settings → General → Back up now… / Verify a backup… / Restore from backup… (checks the backup, saves a safety copy of your current files, then swaps the files in; the server must be stopped) |
 | **Chat / Direct messages** | Chat has a tab per radio channel plus a ✉ tab per person. **New direct message** picks a heard node. For 10 minutes after you message someone, their plain replies come to your tab instead of the BBS menu (replies starting with `/` still reach the BBS); **End conversation** hands them back early. Ticks: ✓ relayed, ✓✓ delivered |
 | **MQTT channel text** | Enter a channel's key on the CentralNJ or SJMesh Settings tab (**Channel keys**, `Name=PSK`, e.g. `LongFast=AQ==`). Text on that channel then shows in a 🌐 Chat tab. Channels without a key stay metadata only on the Network page. Keys stay in your local config (mode 600) and are never logged |
 | **MQTT sending** | Off by default. Tick **Allow sending** on a network's Settings tab (channel key + `msh/<region>/2/e/<channel>/+` topic required) and that 🌐 tab gets a Send box. Messages are encrypted with the channel key and sent as your BBS radio's node id (or **Send as node id**). You confirm once per channel each session. ✓ on broker = the broker echoed it back. Radios hear it only if a gateway downlinks that channel |
 
-**Validation scope:** The earlier version's two-way TCP radio test is historical evidence only. These staged changes and their packaged app require a fresh Intel Mac/radio test. Node snapshots are not continuous presence checks; backups do not yet support restore.
+**Validation scope:** The earlier version's two-way TCP radio test is historical evidence only. These staged changes and their packaged app require a fresh Intel Mac/radio test. Node snapshots are not continuous presence checks.
 
 ### Jersey Mouth Control
 
