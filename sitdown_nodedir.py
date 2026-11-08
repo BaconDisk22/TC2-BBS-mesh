@@ -90,8 +90,12 @@ def radio_row(row, now):
 class NodeDirectory:
     """Every node heard by the radio or on MQTT, kept between restarts."""
 
-    def __init__(self, path=None, clock=time.time, limit=MAX_NODES):
+    def __init__(self, path=None, clock=time.time, limit=MAX_NODES, readonly=False):
         self.clock, self.limit = clock, limit
+        if readonly:
+            # The BBS server only reads the desktop's list; it never creates or changes it.
+            self.db = sqlite3.connect(Path(path).as_uri() + '?mode=ro', uri=True)
+            return
         self.db = sqlite3.connect(str(path) if path else ':memory:')
         if path:
             try:
@@ -205,6 +209,22 @@ class NodeDirectory:
         rows = self.db.execute(f"SELECT {', '.join(COLUMNS)} FROM nodes{where} ORDER BY last_heard DESC LIMIT ?",
                                params + [limit]).fetchall()
         return total, [dict(zip(COLUMNS, row)) for row in rows]
+
+
+def directory_path(config_file):
+    """Where the desktop keeps its node list: beside config.ini (packaged app) or in ~/.sitdown-bbs."""
+    beside = Path(config_file).resolve().with_name('node-directory.db') if config_file else None
+    if beside is not None and beside.exists():
+        return beside
+    return Path.home() / '.sitdown-bbs' / 'node-directory.db'
+
+
+def radio_reply_line(row, now):
+    """One short line for a /node reply over the radio."""
+    name = ' '.join(part for part in (row['short'], f"({row['long']})" if row['long'] else '') if part) or 'Unnamed'
+    where = ', '.join(label for label, column in (('radio', 'radio_heard'), ('CentralNJ', 'centralnj_heard'),
+                                                  ('SJMesh', 'sjmesh_heard')) if row[column])
+    return f"{name} {row['id']} - last heard {ago(now - row['last_heard'])}" + (f' via {where}' if where else '')
 
 
 def ago(seconds):

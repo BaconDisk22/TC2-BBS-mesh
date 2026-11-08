@@ -1,5 +1,8 @@
 """Offline utilities shared by radio commands and the desktop operator."""
 import configparser
+import sqlite3
+import time
+from pathlib import Path
 import logging
 import re
 import threading
@@ -8,6 +11,7 @@ from sitdown_personality import Personality
 from sitdown_online import WeatherDesk, ActivityCounter
 from sitdown_broadcasts import BroadcastStore
 from sitdown_chat import BROADCAST, ChatSendLimiter, routing_status, sent_event
+from sitdown_nodedir import NodeDirectory, radio_reply_line
 from sitdown_dm import Conversations, dm_sent_event, dm_status, peer_id
 
 
@@ -225,6 +229,23 @@ class LocalUtilities:
                 logging.exception('Startup broadcast failed; BBS remains available.')
                 return False
 
+    def saved_node_matches(self, query, exclude, limit):
+        """Short lines for nodes the radio has forgotten but the desktop's node list still has."""
+        path = getattr(self, 'node_directory_path', None)
+        if not path or not Path(path).exists():
+            return [], 0
+        try:
+            directory = NodeDirectory(path, readonly=True)
+            try:
+                total, rows = directory.search(query, limit=50)
+            finally:
+                directory.close()
+        except sqlite3.Error:
+            return [], 0
+        rows = [row for row in rows if row['id'] not in exclude]
+        now = int(time.time())
+        return [radio_reply_line(row, now) + ' (saved list)' for row in rows[:max(0, limit)]], len(rows)
+
     def command(self, message, sender):
         command, _, argument = message.strip().partition(' ')
         command = command.casefold()
@@ -236,10 +257,12 @@ class LocalUtilities:
             if not argument.strip():
                 return "Who's Who: /node <ID, short name or long name>"
             results = lookup_nodes(self.interface.nodes, argument)
-            if not results:
-                return 'No matching nodes in the radio database.'
-            return '\n\n'.join(format_node(row) for row in results[:3]) + (
-                f'\n{len(results)} matches; refine your search.' if len(results) > 3 else '')
+            extra, extra_total = self.saved_node_matches(argument, {row['id'] for row in results}, 3 - min(3, len(results)))
+            if not results and not extra:
+                return 'No matching nodes in the radio database or the saved node list.'
+            parts = [format_node(row) for row in results[:3]] + extra
+            total = len(results) + extra_total
+            return '\n\n'.join(parts) + (f'\n{total} matches; refine your search.' if total > 3 else '')
         if command in ('/schedule', '/cancelannouncement', '/announcements'):
             if not self.is_admin(sender):
                 return 'Announcements require a configured administrator node.'
