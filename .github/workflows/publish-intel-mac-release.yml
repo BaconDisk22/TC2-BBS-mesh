@@ -1,4 +1,4 @@
-name: Publish Intel Mac Release
+name: Publish Mac Release
 
 on:
   push:
@@ -19,9 +19,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  intel-mac-release:
-    runs-on: macos-15-intel
+  mac-release:
+    name: ${{ matrix.label }} release build
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - label: Intel Mac
+            runner: macos-15-intel
+            python_arch: x64
+            cpu: x86_64
+            slug: Intel-Mac
+          - label: Apple Silicon
+            runner: macos-15
+            python_arch: arm64
+            cpu: arm64
+            slug: Apple-Silicon
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,14 +67,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          architecture: x64
+          architecture: ${{ matrix.python_arch }}
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r requirements-mqtt.txt pyserial pyinstaller pillow
       - name: Validate source and tests
         run: |
-          test "$(uname -m)" = "x86_64"
+          test "$(uname -m)" = "${{ matrix.cpu }}"
           python -m compileall -q -x '/\.git/' .
           python -m unittest discover -s tests
           python -m unittest test_sitdown_personality
@@ -84,9 +102,9 @@ jobs:
             --add-data "example_config.ini:." --add-data "assets:assets" \
             --hidden-import paho.mqtt.client --collect-all meshtastic --collect-all pubsub sitdown_desktop.py
           test -d "dist/The Sitdown BBS.app"
-          lipo -archs "dist/The Sitdown BBS.app/Contents/MacOS/The Sitdown BBS" | grep -q x86_64
+          test "$(lipo -archs 'dist/The Sitdown BBS.app/Contents/MacOS/The Sitdown BBS')" = "${{ matrix.cpu }}"
           python scripts/stamp_version.py bundle "dist/The Sitdown BBS.app" "$VERSION"
-      - name: Smoke test the packaged Intel app without radio
+      - name: Smoke test the packaged ${{ matrix.label }} app without radio
         env:
           SITDOWN_VERSION: ${{ steps.version.outputs.value }}
         run: |
@@ -127,37 +145,76 @@ jobs:
           ln -s /Applications dmg-staging/Applications
           cp "packaging/READ ME FIRST.txt" dmg-staging/
           cp scripts/check-mac-launch.sh dmg-staging/
-          bash scripts/create_dmg.sh "The-Sitdown-BBS-Intel-Mac-$VERSION.dmg" "The Sitdown BBS $VERSION"
-          shasum -a 256 "The-Sitdown-BBS-Intel-Mac-$VERSION.dmg" > SHA256SUMS.txt
+          bash scripts/create_dmg.sh "The-Sitdown-BBS-${{ matrix.slug }}-$VERSION.dmg" "The Sitdown BBS $VERSION"
+          shasum -a 256 "The-Sitdown-BBS-${{ matrix.slug }}-$VERSION.dmg" > "SHA256SUMS-${{ matrix.slug }}.txt"
       - name: Verify DMG includes first-launch help
         run: |
-          mnt=$(hdiutil attach -nobrowse -readonly "The-Sitdown-BBS-Intel-Mac-${{ steps.version.outputs.value }}.dmg" | awk -F'\t' '/\/Volumes\//{print $NF}')
+          mnt=$(hdiutil attach -nobrowse -readonly "The-Sitdown-BBS-${{ matrix.slug }}-${{ steps.version.outputs.value }}.dmg" | awk -F'\t' '/\/Volumes\//{print $NF}')
           ls -1 "$mnt"
           test -f "$mnt/READ ME FIRST.txt" && test -f "$mnt/check-mac-launch.sh" && test -d "$mnt/The Sitdown BBS.app"
           hdiutil detach "$mnt" -quiet
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: The-Sitdown-BBS-Intel-Mac-Release
+          name: The-Sitdown-BBS-${{ matrix.slug }}-Release
           path: |
-            The-Sitdown-BBS-Intel-Mac-*.dmg
-            SHA256SUMS.txt
+            The-Sitdown-BBS-${{ matrix.slug }}-*.dmg
+            SHA256SUMS-${{ matrix.slug }}.txt
           retention-days: 30
+
+  publish:
+    name: Publish both Mac builds
+    needs: mac-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: The-Sitdown-BBS-*-Release
+          merge-multiple: true
+      - name: Combine checksums
+        run: |
+          set -euo pipefail
+          ls -1
+          cat SHA256SUMS-*.txt > SHA256SUMS.txt
+          sha256sum -c SHA256SUMS.txt
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.value }}
-          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+          VERSION: ${{ needs.mac-release.outputs.version }}
+          PRERELEASE: ${{ needs.mac-release.outputs.prerelease }}
         shell: bash
         run: |
           set -euo pipefail
+          FILES=("The-Sitdown-BBS-Intel-Mac-$VERSION.dmg" "The-Sitdown-BBS-Apple-Silicon-$VERSION.dmg" SHA256SUMS.txt)
           FLAGS=()
           if [[ "$PRERELEASE" == "true" ]]; then FLAGS+=(--prerelease); fi
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release upload "$VERSION" "The-Sitdown-BBS-Intel-Mac-$VERSION.dmg" SHA256SUMS.txt --clobber
+          NOTES="Unsigned, unnotarized builds for Intel Macs and Apple Silicon Macs. Pick the DMG for your Mac, and open READ ME FIRST inside it. Development testing recommended."
+          if gh release view "$VERSION" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "${FILES[@]}" -R "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$VERSION" "The-Sitdown-BBS-Intel-Mac-$VERSION.dmg" SHA256SUMS.txt \
-              --target "$GITHUB_SHA" --title "The Sitdown BBS $VERSION (Intel Mac)" \
-              --notes "Unsigned, unnotarized Intel Mac build. Development testing recommended. See INTEL_MAC_TEST_BUILDS.md for installation instructions." \
-              "${FLAGS[@]}"
+            gh release create "$VERSION" "${FILES[@]}" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "The Sitdown BBS $VERSION (Mac)" --notes "$NOTES" "${FLAGS[@]}"
+          fi
+      - name: Publish to the Releases repository
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          VERSION: ${{ needs.mac-release.outputs.version }}
+          PRERELEASE: ${{ needs.mac-release.outputs.prerelease }}
+          RELEASES_REPO: TheLogsAreScreaming/The-Sitdown-BBS-Releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::notice::RELEASES_TOKEN is not set; copy this release to $RELEASES_REPO by hand."
+            exit 0
+          fi
+          FILES=("The-Sitdown-BBS-Intel-Mac-$VERSION.dmg" "The-Sitdown-BBS-Apple-Silicon-$VERSION.dmg" SHA256SUMS.txt)
+          FLAGS=()
+          if [[ "$PRERELEASE" == "true" ]]; then FLAGS+=(--prerelease); fi
+          NOTES="Unsigned, unnotarized builds for Intel Macs and Apple Silicon Macs. Pick the DMG for your Mac, and open READ ME FIRST inside it. Source: https://github.com/$GITHUB_REPOSITORY/releases/tag/$VERSION"
+          if gh release view "$VERSION" -R "$RELEASES_REPO" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "${FILES[@]}" -R "$RELEASES_REPO" --clobber
+          else
+            gh release create "$VERSION" "${FILES[@]}" -R "$RELEASES_REPO" \
+              --title "The Sitdown BBS $VERSION (Mac)" --notes "$NOTES" "${FLAGS[@]}"
           fi

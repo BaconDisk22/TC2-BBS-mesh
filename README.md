@@ -58,7 +58,7 @@ Think old-school bulletin boards with a North Jersey attitude: diner coffee, Sun
 
 **Hardware verification (October 2026):** The Intel Mac desktop BBS launched and received a real Meshtastic message over TCP. The sending device confirmed receiving the BBS menu reply. The latest compact layout and radio activity indicator still require follow-up testing on the Mac. The activity indicator reflects incoming messages seen in server logs, not continuous link health.
 
-**Development note:** The desktop dashboard includes live server logs, process monitoring, USB port discovery, optional process restart, and a radio-free demo mode. Intel Mac build and release workflows are configured; check [Releases](https://github.com/BaconDisk22/The-Sitdown-BBS/releases) for a successfully published build. Real radio connection verification, restore, and automated screenshot publication still require further validation.
+**Development note:** The desktop dashboard includes live server logs, process monitoring, USB port discovery, optional process restart, and a radio-free demo mode. Intel and Apple Silicon Mac builds are published to [The-Sitdown-BBS-Releases](https://github.com/TheLogsAreScreaming/The-Sitdown-BBS-Releases/releases). Over-the-air verification of direct messages, MQTT sending and USB connections is still pending.
 
 ## 🕵️ The Backroom — dashboard tools
 
@@ -121,17 +121,17 @@ The current desktop dashboard uses Italian red and green accents, dark charcoal 
 
 </details>
 
-[Desktop screenshot automation](https://github.com/BaconDisk22/The-Sitdown-BBS/actions/workflows/readme-desktop-screenshot.yml) · [Intel Mac releases](https://github.com/BaconDisk22/The-Sitdown-BBS/releases)
+[Desktop screenshot automation](https://github.com/TheLogsAreScreaming/The-Sitdown-BBS/actions/workflows/readme-desktop-screenshot.yml) · [Mac releases](https://github.com/TheLogsAreScreaming/The-Sitdown-BBS-Releases/releases)
 
-### 📦 Download the latest Intel Mac build
+### 📦 Download the latest Mac build
 
-[![Intel Mac test build](https://github.com/BaconDisk22/The-Sitdown-BBS/actions/workflows/intel-mac-test-build.yml/badge.svg)](https://github.com/BaconDisk22/The-Sitdown-BBS/actions/workflows/intel-mac-test-build.yml)
+[![Intel Mac test build](https://github.com/TheLogsAreScreaming/The-Sitdown-BBS/actions/workflows/intel-mac-test-build.yml/badge.svg)](https://github.com/TheLogsAreScreaming/The-Sitdown-BBS/actions/workflows/intel-mac-test-build.yml)
 
-**[View GitHub Releases](https://github.com/BaconDisk22/The-Sitdown-BBS/releases)** · **[Download test builds from GitHub Actions](https://github.com/BaconDisk22/The-Sitdown-BBS/actions/workflows/intel-mac-test-build.yml)**
+**[Download from The-Sitdown-BBS-Releases](https://github.com/TheLogsAreScreaming/The-Sitdown-BBS-Releases/releases)** · **[Test builds from GitHub Actions](https://github.com/TheLogsAreScreaming/The-Sitdown-BBS/actions/workflows/intel-mac-test-build.yml)**
 
-- **GitHub Releases:** Look for the latest `The-Sitdown-BBS-Intel-Mac-*.dmg` attached to a successful release.
+- **Releases:** each release has two DMGs: `The-Sitdown-BBS-Intel-Mac-*.dmg` for Intel Macs and `The-Sitdown-BBS-Apple-Silicon-*.dmg` for M-series Macs (Apple menu → About This Mac shows which you have), plus `SHA256SUMS.txt`.
 - **GitHub Actions:** Open a successful **Intel Mac test build** run and download the **The-Sitdown-BBS-Intel-Mac-Test** artifact. Artifacts expire after 14 days.
-- **Intel Mac:** The workflow targets x86-64 macOS. Builds are currently **unsigned and unnotarized**.
+- **Both Mac types:** Intel (x86-64) and Apple Silicon (arm64) are built and tested separately. Builds are currently **unsigned and unnotarized**.
 - **First launch:** open the app from Finder and give macOS a few minutes to check it — it can look frozen, but the app hasn't started yet. If it's blocked, use System Settings → Privacy & Security → **Open Anyway**. Each DMG has a **READ ME FIRST** and a `check-mac-launch.sh` checker; details in [docs/MAC_FIRST_LAUNCH.md](docs/MAC_FIRST_LAUNCH.md).
 - **Demo mode:** Launch the app and enable **Demo mode (no radio)** to explore the dashboard without transmitting.
 - **Live radio:** Configure your Meshtastic device before starting the real BBS server. A running process alone does not confirm a connected radio.
@@ -143,7 +143,7 @@ For packaging details see [INTEL_MAC_TEST_BUILDS.md](INTEL_MAC_TEST_BUILDS.md), 
 Requires **Python 3 with Tkinter** and the dependencies in `requirements.txt`.
 
 ```bash
-git clone https://github.com/BaconDisk22/The-Sitdown-BBS.git
+git clone https://github.com/TheLogsAreScreaming/The-Sitdown-BBS.git
 cd The-Sitdown-BBS
 python3 -m venv venv
 source venv/bin/activate
