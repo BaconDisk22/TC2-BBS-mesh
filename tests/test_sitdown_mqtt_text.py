@@ -132,6 +132,23 @@ class PipelineTests(unittest.TestCase):
         result = pipe.process('centralnj', envelope(data(1, b'hi'), packet_id=11))
         self.assertEqual((result.short, result.long), ('EDC', 'Every Day Carry'))
 
+    def test_position_and_battery_are_read_from_keyed_packets(self):
+        from meshtastic.protobuf import telemetry_pb2
+        pipe = self.pipeline()
+        position = mesh_pb2.Position(latitude_i=402000000, longitude_i=-745000000)
+        result = pipe.process('centralnj', envelope(data(3, position.SerializeToString()), packet_id=20))
+        self.assertEqual(result.details, {'latitude': 40.2, 'longitude': -74.5})
+        telemetry = telemetry_pb2.Telemetry()
+        telemetry.device_metrics.battery_level = 77
+        result = pipe.process('centralnj', envelope(data(67, telemetry.SerializeToString()), packet_id=21))
+        self.assertEqual(result.details, {'battery': 77})
+        for bad in (mesh_pb2.Position(latitude_i=0, longitude_i=0), mesh_pb2.Position(latitude_i=1000000000,
+                                                                                      longitude_i=1)):
+            with self.subTest(bad=str(bad)[:20]):
+                self.assertIsNone(pipe.process('centralnj', envelope(data(3, bad.SerializeToString()),
+                                                                     packet_id=22 + bad.latitude_i % 7)).details)
+        self.assertIsNone(pipe.process('centralnj', envelope(data(3, b'\xff\xff'), packet_id=30)).details)
+
     def test_nodeinfo_result_itself_carries_the_names(self):
         pipe = self.pipeline()
         user = mesh_pb2.User(short_name='EDC', long_name='Every Day Carry')

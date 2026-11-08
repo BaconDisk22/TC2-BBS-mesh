@@ -60,6 +60,15 @@ class DirectoryTests(unittest.TestCase):
         nodes.record_mqtt('centralnj', 0x0000abcd)                      # a later packet without names keeps them
         self.assertEqual(nodes.search('!0000abcd')[1][0]['long'], 'Alpha Bravo')
 
+    def test_mqtt_details_fill_position_and_battery(self):
+        nodes = NodeDirectory(clock=Clock())
+        nodes.record_mqtt_many([('centralnj', 5, '', '', {'latitude': 40.1, 'longitude': -74.2, 'battery': 64}),
+                                ('centralnj', 6, '', '', {'latitude': 95, 'longitude': 0, 'battery': 400})])
+        five = nodes.search('!00000005')[1][0]
+        self.assertEqual((five['latitude'], five['longitude'], five['battery']), (40.1, -74.2, 64))
+        six = nodes.search('!00000006')[1][0]
+        self.assertEqual((six['latitude'], six['battery']), (None, None))
+
     def test_filters_by_time_source_and_text(self):
         clock = Clock()
         nodes = NodeDirectory(clock=clock)
@@ -135,6 +144,17 @@ class DesktopTests(unittest.TestCase):
         a.node_directory.record_mqtt('sjmesh', 0x99)
         a.record_radio_nodes([radio(1, 1_799_999_000), radio(2, 1_799_999_000)])
         a.node_count.set.assert_called_with('Known nodes: 3 (radio holds 2)')
+
+    def test_details_from_several_packets_are_merged_before_the_flush(self):
+        a = self.app()
+        summary = SimpleNamespace(from_id=0x77)
+        a.record_mqtt_node('sjmesh', SimpleNamespace(accepted=True, summary=summary, short='', long='',
+                                                     details={'battery': 50}))
+        a.record_mqtt_node('sjmesh', SimpleNamespace(accepted=True, summary=summary, short='SV', long='',
+                                                     details={'latitude': 39.9, 'longitude': -74.9}))
+        a.flush_mqtt_nodes()
+        row = a.node_directory.search()[1][0]
+        self.assertEqual((row['short'], row['battery'], row['latitude']), ('SV', 50, 39.9))
 
     def test_mqtt_sightings_are_batched_and_names_kept(self):
         a = self.app()
