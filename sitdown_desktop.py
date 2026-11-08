@@ -1256,9 +1256,10 @@ class SitdownApp:
             return
         pending = self.__dict__.setdefault('_mqtt_sightings', {})
         key = (network, summary.from_id)
-        names = (getattr(result, 'short', '') or '', getattr(result, 'long', '') or '')
-        if names[0] or names[1] or key not in pending:
-            pending[key] = names
+        short, long = getattr(result, 'short', '') or '', getattr(result, 'long', '') or ''
+        before = pending.get(key, ('', '', {}))
+        details = {**before[2], **(getattr(result, 'details', None) or {})}
+        pending[key] = (short or before[0], long or before[1], details)
 
     def flush_mqtt_nodes(self):
         """Write this poll's MQTT sightings in one transaction."""
@@ -1267,7 +1268,7 @@ class SitdownApp:
             return
         self._mqtt_sightings = {}
         try:
-            self.directory().record_mqtt_many([(n, number, s, l) for (n, number), (s, l) in pending.items()])
+            self.directory().record_mqtt_many([(n, number, s, l, d) for (n, number), (s, l, d) in pending.items()])
         except sqlite3.Error:
             pass
 

@@ -154,11 +154,17 @@ class NodeDirectory:
         return self.record_mqtt_many([(network, number, short, long)]) == 1
 
     def record_mqtt_many(self, sightings):
-        """Record (network, node number, short, long) sightings in one transaction. Returns how many were valid."""
+        """Record (network, node number, short, long[, details]) sightings in one transaction.
+
+        details may carry latitude/longitude/battery opened from POSITION or TELEMETRY packets.
+        Returns how many sightings were valid.
+        """
         now = int(self.clock())
         stored = 0
         with self.db:
-            for network, number, short, long in sightings:
+            for sighting in sightings:
+                network, number, short, long = sighting[:4]
+                details = sighting[4] if len(sighting) > 4 and isinstance(sighting[4], dict) else {}
                 identity = peer_id(number)
                 if network not in SOURCES[1:] or identity is None:
                     continue
@@ -170,6 +176,13 @@ class NodeDirectory:
                     "short = CASE WHEN excluded.short != '' THEN excluded.short ELSE short END, "
                     "long = CASE WHEN excluded.long != '' THEN excluded.long ELSE long END",
                     (identity, _text(short, 8), _text(long, 40), now, now, now))
+                latitude, longitude = _number(details.get('latitude')), _number(details.get('longitude'))
+                if latitude is not None and longitude is not None and -90 <= latitude <= 90 and -180 <= longitude <= 180:
+                    self.db.execute('UPDATE nodes SET latitude = ?, longitude = ? WHERE id = ?',
+                                    (latitude, longitude, identity))
+                battery = _number(details.get('battery'), int)
+                if battery is not None and 0 <= battery <= 101:
+                    self.db.execute('UPDATE nodes SET battery = ? WHERE id = ?', (battery, identity))
                 stored += 1
             if stored:
                 self._prune()
