@@ -10,7 +10,7 @@ import secrets
 
 from sitdown_chat import ChatSendLimiter
 from sitdown_dm import peer_id
-from sitdown_mqtt_crypto import channel_hash, crypt, safe_channel_keys
+from sitdown_mqtt_crypto import channel_hash, crypt, keys_for_topics
 from sitdown_mqtt_send_policy import check_send_permission
 from sitdown_online import topic_list
 
@@ -74,7 +74,8 @@ class MQTTSender:
         if not isinstance(text, str) or not text.strip() or len(text.encode('utf-8')) > MAX_BYTES:
             raise ValueError(f'Message must contain 1–{MAX_BYTES} UTF-8 bytes.')
         section = 'mqtt_' + network
-        key = safe_channel_keys(config.get(section, 'channel_keys', fallback='')).get(room)
+        key = keys_for_topics(config.get(section, 'channel_keys', fallback=''),
+                              config.get(section, 'topic', fallback='')).get(room)
         if key is None:
             raise ValueError(f'No valid key for {room}; add it under Channel keys in Settings.')
         number = peer_id(config.get(section, 'send_as', fallback='').strip() or sender)
