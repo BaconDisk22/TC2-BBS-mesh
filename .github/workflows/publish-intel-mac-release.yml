@@ -188,7 +188,7 @@ jobs:
           FILES=("The-Sitdown-BBS-Intel-Mac-$VERSION.dmg" "The-Sitdown-BBS-Apple-Silicon-$VERSION.dmg" SHA256SUMS.txt)
           FLAGS=()
           if [[ "$PRERELEASE" == "true" ]]; then FLAGS+=(--prerelease); fi
-          NOTES="Unsigned, unnotarized builds for Intel Macs and Apple Silicon Macs. Pick the DMG for your Mac, and open READ ME FIRST inside it. Development testing recommended."
+          NOTES="Unsigned, unnotarized builds for Intel Macs and Apple Silicon Macs. Pick the DMG for your Mac: in Apple menu, About This Mac, a Chip line means Apple Silicon and a Processor line naming Intel means Intel. To check a download, run shasum -a 256 -c SHA256SUMS.txt in its folder. Then open READ ME FIRST inside the DMG. Development testing recommended."
           if gh release view "$VERSION" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$VERSION" "${FILES[@]}" -R "$GITHUB_REPOSITORY" --clobber
           else
@@ -211,7 +211,7 @@ jobs:
           FILES=("The-Sitdown-BBS-Intel-Mac-$VERSION.dmg" "The-Sitdown-BBS-Apple-Silicon-$VERSION.dmg" SHA256SUMS.txt)
           FLAGS=()
           if [[ "$PRERELEASE" == "true" ]]; then FLAGS+=(--prerelease); fi
-          NOTES="Unsigned, unnotarized builds for Intel Macs and Apple Silicon Macs. Pick the DMG for your Mac, and open READ ME FIRST inside it. Source: https://github.com/$GITHUB_REPOSITORY/releases/tag/$VERSION"
+          NOTES="Unsigned, unnotarized builds for Intel Macs and Apple Silicon Macs. Pick the DMG for your Mac: in Apple menu, About This Mac, a Chip line means Apple Silicon and a Processor line naming Intel means Intel. To check a download, run shasum -a 256 -c SHA256SUMS.txt in its folder. Then open READ ME FIRST inside the DMG. Source: https://github.com/$GITHUB_REPOSITORY/releases/tag/$VERSION"
           if gh release view "$VERSION" -R "$RELEASES_REPO" >/dev/null 2>&1; then
             gh release upload "$VERSION" "${FILES[@]}" -R "$RELEASES_REPO" --clobber
           else
