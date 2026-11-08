@@ -56,7 +56,7 @@ Think old-school bulletin boards with a North Jersey attitude: diner coffee, Sun
 | 🧪 **Demo Mode** | Explore desktop controls without connecting or transmitting over radio |
 | 📦 **The Books** | Create a ZIP backup of available local settings and database files |
 
-**Hardware verification (October 2026):** The Intel Mac desktop BBS launched and received a real Meshtastic message over TCP. The sending device confirmed receiving the BBS menu reply. The latest compact layout and radio activity indicator still require follow-up testing on the Mac. The activity indicator reflects incoming messages seen in server logs, not continuous link health.
+**Hardware verification:** In October 2026 an earlier Intel Mac build launched, received a real Meshtastic message over TCP, and its menu reply was confirmed on the sending device. Nothing newer has been verified on a radio yet.
 
 **Development note:** The desktop dashboard includes live server logs, process monitoring, USB port discovery, optional process restart, and a radio-free demo mode. Intel and Apple Silicon Mac builds are published to [The-Sitdown-BBS-Releases](https://github.com/TheLogsAreScreaming/The-Sitdown-BBS-Releases/releases). Over-the-air verification of direct messages, MQTT sending and USB connections is still pending.
 
@@ -76,7 +76,7 @@ The desktop app has a sidebar with four groups: **Overview** (Dashboard, Radio),
 | **MQTT channel text** | Enter a channel's key on the CentralNJ or SJMesh Settings tab (**Channel keys**, `Name=PSK`, e.g. `LongFast=AQ==`). Text on that channel then shows in a 🌐 Chat tab. Channels without a key stay metadata only on the Network page. Keys stay in your local config (mode 600) and are never logged |
 | **MQTT sending** | Off by default. Tick **Allow sending** on a network's Settings tab (channel key + `msh/<region>/2/e/<channel>/+` topic required) and that 🌐 tab gets a Send box. Messages are encrypted with the channel key and sent as your BBS radio's node id (or **Send as node id**). You confirm once per channel each session. ✓ on broker = the broker echoed it back. Radios hear it only if a gateway downlinks that channel |
 
-**Validation scope:** The earlier version's two-way TCP radio test is historical evidence only. These staged changes and their packaged app require a fresh Intel Mac/radio test. Node snapshots are not continuous presence checks.
+**Validation scope:** The October test is historical evidence only. v0.1.0-rc.14 has passed automated checks but still needs the [radio test session](docs/RADIO_TEST_SESSION.md) on real hardware, and the Apple Silicon build has not been run by a person on an M-series Mac. Node snapshots are not continuous presence checks.
 
 ### Jersey Mouth Control
 
