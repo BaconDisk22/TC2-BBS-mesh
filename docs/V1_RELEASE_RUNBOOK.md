@@ -14,6 +14,9 @@ This is a **manual verification plan**, not a claim that any test has passed.
 9. MQTT broker message counts alone do **not** prove decoded Meshtastic delivery.
 10. Review logs, screenshots, diagnostics and release assets for credentials and PSKs.
 
+## Session checklist
+Steps 4–8 are laid out as one sitting, with exact message texts to approve first, in [RADIO_TEST_SESSION.md](RADIO_TEST_SESSION.md). It also covers direct messages, MQTT read/send, USB, restore and the 24-hour run.
+
 ## Evidence
 CI run URL and commit SHA; Intel Mac OS/architecture and DMG checksum; USB/TCP test notes; both-direction CentralNJ delivery evidence; explicit human sign-off.
 
