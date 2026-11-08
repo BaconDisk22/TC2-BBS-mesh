@@ -60,6 +60,33 @@ def parse_channel_keys(setting):
     return keys
 
 
+def topic_channels(topics):
+    """Channel names (with their exact capitalisation) from msh/<region>/2/e/<channel>/<gateway|+> topics."""
+    from sitdown_online import topic_list
+    names = []
+    for topic in topic_list(topics):
+        parts = topic.split('/')
+        if len(parts) >= 6 and parts[-4:-2] == ['2', 'e'] and parts[-2] and parts[-2] not in names:
+            names.append(parts[-2])
+    return names
+
+
+def keys_for_topics(setting, topics):
+    """Channel keys renamed to the topic's spelling when only capitalisation differs.
+
+    Meshtastic channel names are case-sensitive (they feed the channel hash), but
+    people type CENTRALNJ for CentralNJ; the topic says which spelling is real.
+    """
+    spelling = {name.casefold(): name for name in topic_channels(topics)}
+    return {spelling.get(name.casefold(), name): key for name, key in safe_channel_keys(setting).items()}
+
+
+def unmatched_key_names(setting, topics):
+    """Key names that match no watched channel, even ignoring capitalisation."""
+    watched = {name.casefold() for name in topic_channels(topics)}
+    return [name for name in safe_channel_keys(setting) if name.casefold() not in watched]
+
+
 def safe_channel_keys(setting):
     """Like parse_channel_keys, but an invalid setting simply reads nothing."""
     try:
