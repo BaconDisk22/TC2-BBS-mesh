@@ -26,7 +26,7 @@ from sitdown_monitor import ServerSupervisor
 from sitdown_mqtt_feed import MeshFeed, NETWORK_LABELS, format_stats
 from sitdown_chat import ChatLog, dm_peer, event_key, mqtt_room, status_label
 from sitdown_dm import peer_id
-from sitdown_mqtt_crypto import safe_channel_keys
+from sitdown_mqtt_crypto import keys_for_topics, unmatched_key_names
 from sitdown_mqtt_sender import MQTTSender, send_rooms
 from sitdown_nodedir import NodeDirectory, format_entry
 from sitdown_version import VERSION
@@ -950,7 +950,8 @@ class SitdownApp:
             except ValueError:
                 allowed = False
             if allowed:
-                keys = safe_channel_keys(config.get(section, 'channel_keys', fallback=''))
+                keys = keys_for_topics(config.get(section, 'channel_keys', fallback=''),
+                                       config.get(section, 'topic', fallback=''))
                 found += [f'mqtt:{network}:{room}' for room in send_rooms(config.get(section, 'topic', fallback=''), keys)]
         return found
 
@@ -1540,7 +1541,7 @@ class SitdownApp:
                     config.write(stream)
                 temporary.chmod(0o600)
                 temporary.replace(path)
-                self.show_info('Settings saved', 'Restart the server to apply these settings.')
+                self.settings_saved(config)
             except (ValueError, OSError) as exc:
                 self.show_info('Settings not saved', str(exc))
 
@@ -1956,6 +1957,49 @@ class SitdownApp:
             self.restart_at = time.monotonic() + delay
             self.log(f"Retrying process in {delay}s (attempt {self.retry_count}).")
             self.status.set(f"Retry in {delay}s (attempt {self.retry_count})")
+
+    def settings_saved(self, config):
+        """Report a save, flag keys that match no watched channel, and offer to apply everything now."""
+        warnings = []
+        for network, label in NETWORK_LABELS.items():
+            section = 'mqtt_' + network
+            stray = unmatched_key_names(config.get(section, 'channel_keys', fallback=''),
+                                        config.get(section, 'topic', fallback=''))
+            if stray:
+                warnings.append(f"{label}: the key for {', '.join(stray)} matches none of your topics, so it "
+                                f"won't be used. Use the channel name from a topic like msh/US/2/e/<name>/+.")
+        if self.dual_mqtt is not None:
+            from sitdown_dual_mqtt import channel_keys
+            self.dual_mqtt.pipeline.keys = channel_keys(config)          # new keys read text right away
+        server_running = bool(self.supervisor and self.supervisor.running)
+        mqtt_live = [n for n, m in (self.dual_mqtt.monitors.items() if self.dual_mqtt is not None else ())
+                     if m.client is not None]
+        message = 'Your settings are saved.'
+        if warnings:
+            message += '\n\n' + '\n'.join(warnings)
+        if not (server_running or mqtt_live) or self.demo.get():
+            self.show_info('Settings saved', message + '\n\nThey apply the next time the server starts.')
+            return
+        parts = (['restarts the BBS server'] if server_running else []) + (
+            ['reconnects ' + ' and '.join(NETWORK_LABELS[n] for n in mqtt_live)] if mqtt_live else [])
+        if messagebox.askyesno('Apply settings now?', message + f"\n\nApply now? This {' and '.join(parts)}.",
+                               parent=self.root):
+            self.apply_saved_settings(config, server_running, mqtt_live)
+        elif warnings:
+            self.show_info('Check your channel keys', '\n'.join(warnings))
+
+    def apply_saved_settings(self, config, server_running, mqtt_live):
+        """Restart the server and rebuild MQTT connections with the saved settings."""
+        if mqtt_live:
+            from sitdown_dual_mqtt import DualMQTTMonitors
+            self.dual_mqtt.stop()
+            self.dual_mqtt = DualMQTTMonitors(config)
+            for network in mqtt_live:
+                self.dual_mqtt.connect(network)
+            self.log('Reconnected ' + ', '.join(NETWORK_LABELS[n] for n in mqtt_live) + ' with the new settings.')
+        if server_running:
+            self.restart()
+        self.refresh_mqtt_states()
 
     def restart(self):
         """Restart on demand without scheduling crash recovery."""
