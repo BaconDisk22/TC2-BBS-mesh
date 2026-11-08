@@ -68,7 +68,7 @@ The desktop app has a sidebar with four groups: **Overview** (Dashboard, Radio),
 | --- | --- |
 | **Dashboard** | Server status and controls, radio connection (USB or network, Find USB Ports, Check Radio Connection), MQTT network status with Connect/Disconnect, and the activity log |
 | **Activity log** | Search (Find), Expand to a large window, Save… to a text file, or Clear the view without stopping the server |
-| **Nodes** | Every node the app has heard, by radio or on MQTT, saved on your Mac (`~/.sitdown-bbs/node-directory.db`, up to 20,000). Your radio can only remember about 100 and forgets the oldest; this list keeps them. Filter by 1 hour / 24 hours / 7 days / All and by Radio or MQTT |
+| **Nodes** | Every node the app has heard, by radio or on MQTT, saved on your Mac (`~/.sitdown-bbs/node-directory.db`, up to 20,000). Your radio can only remember about 100 and forgets the oldest; this list keeps them. Filter by 1 hour / 24 hours / 7 days / All and by Radio or MQTT. The radio `/node` command searches the radio first, then this saved list |
 | **Restart after a crash** | Optionally restart the server after an unexpected exit, with a growing delay capped at a minute |
 | **Radio activity** | Shows when the radio last heard a packet, without claiming a permanent connection |
 | **Backups** | Settings → General → Back up now… / Verify a backup… / Restore from backup… (checks the backup, saves a safety copy of your current files, then swaps the files in; the server must be stopped) |

@@ -90,8 +90,12 @@ def radio_row(row, now):
 class NodeDirectory:
     """Every node heard by the radio or on MQTT, kept between restarts."""
 
-    def __init__(self, path=None, clock=time.time, limit=MAX_NODES):
+    def __init__(self, path=None, clock=time.time, limit=MAX_NODES, readonly=False):
         self.clock, self.limit = clock, limit
+        if readonly:
+            # The BBS server only reads the desktop's list; it never creates or changes it.
+            self.db = sqlite3.connect(Path(path).as_uri() + '?mode=ro', uri=True)
+            return
         self.db = sqlite3.connect(str(path) if path else ':memory:')
         if path:
             try:
@@ -150,11 +154,17 @@ class NodeDirectory:
         return self.record_mqtt_many([(network, number, short, long)]) == 1
 
     def record_mqtt_many(self, sightings):
-        """Record (network, node number, short, long) sightings in one transaction. Returns how many were valid."""
+        """Record (network, node number, short, long[, details]) sightings in one transaction.
+
+        details may carry latitude/longitude/battery opened from POSITION or TELEMETRY packets.
+        Returns how many sightings were valid.
+        """
         now = int(self.clock())
         stored = 0
         with self.db:
-            for network, number, short, long in sightings:
+            for sighting in sightings:
+                network, number, short, long = sighting[:4]
+                details = sighting[4] if len(sighting) > 4 and isinstance(sighting[4], dict) else {}
                 identity = peer_id(number)
                 if network not in SOURCES[1:] or identity is None:
                     continue
@@ -166,6 +176,13 @@ class NodeDirectory:
                     "short = CASE WHEN excluded.short != '' THEN excluded.short ELSE short END, "
                     "long = CASE WHEN excluded.long != '' THEN excluded.long ELSE long END",
                     (identity, _text(short, 8), _text(long, 40), now, now, now))
+                latitude, longitude = _number(details.get('latitude')), _number(details.get('longitude'))
+                if latitude is not None and longitude is not None and -90 <= latitude <= 90 and -180 <= longitude <= 180:
+                    self.db.execute('UPDATE nodes SET latitude = ?, longitude = ? WHERE id = ?',
+                                    (latitude, longitude, identity))
+                battery = _number(details.get('battery'), int)
+                if battery is not None and 0 <= battery <= 101:
+                    self.db.execute('UPDATE nodes SET battery = ? WHERE id = ?', (battery, identity))
                 stored += 1
             if stored:
                 self._prune()
@@ -205,6 +222,22 @@ class NodeDirectory:
         rows = self.db.execute(f"SELECT {', '.join(COLUMNS)} FROM nodes{where} ORDER BY last_heard DESC LIMIT ?",
                                params + [limit]).fetchall()
         return total, [dict(zip(COLUMNS, row)) for row in rows]
+
+
+def directory_path(config_file):
+    """Where the desktop keeps its node list: beside config.ini (packaged app) or in ~/.sitdown-bbs."""
+    beside = Path(config_file).resolve().with_name('node-directory.db') if config_file else None
+    if beside is not None and beside.exists():
+        return beside
+    return Path.home() / '.sitdown-bbs' / 'node-directory.db'
+
+
+def radio_reply_line(row, now):
+    """One short line for a /node reply over the radio."""
+    name = ' '.join(part for part in (row['short'], f"({row['long']})" if row['long'] else '') if part) or 'Unnamed'
+    where = ', '.join(label for label, column in (('radio', 'radio_heard'), ('CentralNJ', 'centralnj_heard'),
+                                                  ('SJMesh', 'sjmesh_heard')) if row[column])
+    return f"{name} {row['id']} - last heard {ago(now - row['last_heard'])}" + (f' via {where}' if where else '')
 
 
 def ago(seconds):
