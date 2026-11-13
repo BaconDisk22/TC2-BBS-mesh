@@ -46,7 +46,7 @@ One sitting that covers every over-the-air feature not yet verified. It is a **p
 | --- | --- | --- | --- |
 | C1 | Leave Chat → 🌐 CentralNJ open for a few minutes | Other people's CentralNJ text appears (if anyone talks) | |
 | C2 | From the EDC phone, send **M5** on the CentralNJ channel | Shows in the radio's CentralNJ tab; if your radio uplinks CentralNJ, it also shows in 🌐 CentralNJ | |
-| C3 | Settings → CentralNJ: **Allow sending to CentralNJ from Chat** is On; send **M4** from 🌐 CentralNJ and confirm | **… sending**, then **✓ on broker** within a minute. If the broker refuses, the log says why | |
+| C3 | Settings → CentralNJ: **Allow sending to CentralNJ from Chat** is On; send **M4** from 🌐 CentralNJ and confirm | **… sending**, then **✓ broker accepted** and usually **✓ on broker** within a minute (accepted alone means the broker took it but didn't echo it back). If the broker refuses, the log says why | |
 | C4 | Does M4 arrive on the EDC phone (CentralNJ channel)? | Only if a gateway downlinks CentralNJ. Note yes or no; either answer is useful | |
 
 ## D. Saved node list over the radio (M6)

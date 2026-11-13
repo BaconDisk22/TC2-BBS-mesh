@@ -193,5 +193,46 @@ class DesktopSendTests(unittest.TestCase):
         self.assertEqual(a.sendable_rooms(), [])
 
 
+class BrokerAcceptedTests(unittest.TestCase):
+    """The broker's PUBACK shows before (or without) the echo; it never replaces a final result."""
+
+    def test_puback_marks_broker_accepted_then_echo_upgrades(self):
+        a, conn = app()
+        info = SimpleNamespace(rc=0, is_published=Mock(return_value=False))
+        conn.publish.return_value = info
+        with patch.object(desktop.messagebox, 'askyesno', return_value=True):
+            self.assertTrue(a.send_mqtt('mqtt:centralnj:CentralNJ', '🌐 CentralNJ', Draft('hi all')))
+        a.note_mqtt_accepted()
+        row = a.chat_log.messages('mqtt:centralnj:CentralNJ')[0]
+        self.assertEqual(row['status'], 'sending')                 # no PUBACK yet
+        info.is_published.return_value = True
+        a.note_mqtt_accepted()
+        self.assertEqual(status_label(row, now=row['rx_time'] + 600), '✓ broker accepted')   # no timeout once accepted
+        a.note_mqtt_accepted()
+        self.assertEqual(a.log.call_count, 2)                      # published line + one accepted line
+        self.assertEqual(a.chat_log.set_status(99, 'posted')['status'], 'posted')
+        self.assertIsNone(a.chat_log.set_status(99, 'accepted'))   # a late PUBACK can't undo the echo
+
+    def test_no_puback_still_times_out(self):
+        a, conn = app()
+        conn.publish.return_value = SimpleNamespace(rc=0, is_published=Mock(return_value=False))
+        with patch.object(desktop.messagebox, 'askyesno', return_value=True):
+            a.send_mqtt('mqtt:centralnj:CentralNJ', '🌐 CentralNJ', Draft('hello'))
+        a.note_mqtt_accepted()
+        row = a.chat_log.messages('mqtt:centralnj:CentralNJ')[0]
+        self.assertEqual(status_label(row, now=row['rx_time'] + 600), '? no confirmation')
+
+    def test_receipts_are_bounded_and_broken_info_is_ignored(self):
+        sender = MQTTSender()
+        sender.receipts = {n: SimpleNamespace(is_published=Mock(side_effect=RuntimeError)) for n in range(5)}
+        self.assertEqual(sender.accepted(), [])
+        ids = iter(range(1, 200))
+        sender = MQTTSender(new_id=lambda: next(ids), limiters={'centralnj': Mock(reserve=Mock(return_value=True))})
+        for _ in range(150):
+            sender.send(config(), 'centralnj', 'CentralNJ', 'x', client=client(), sender='!934cca70',
+                        session_confirmed=True)
+        self.assertEqual(len(sender.receipts), 100)
+
+
 if __name__ == '__main__':
     unittest.main()
