@@ -65,6 +65,21 @@ class MQTTSender:
     def __init__(self, limiters=None, new_id=None):
         self.limiters = limiters or {}
         self.new_id = new_id or (lambda: secrets.randbelow(0xFFFFFFFE) + 1)
+        self.receipts = {}              # packet id -> paho publish info, until the broker's PUBACK
+
+    def accepted(self):
+        """Packet ids the broker has acknowledged (PUBACK) since the last call."""
+        done = []
+        for packet_id, info in list(self.receipts.items()):
+            check = getattr(info, 'is_published', None)
+            try:
+                published = bool(check()) if callable(check) else False
+            except Exception:
+                published = False
+            if published:
+                done.append(packet_id)
+                del self.receipts[packet_id]
+        return done
 
     def send(self, config, network, room, text, *, client, sender, demo=False, session_confirmed=False):
         """Return the packet id published, or raise ValueError saying which gate stopped it."""
@@ -94,4 +109,7 @@ class MQTTSender:
         info = client.publish(topic, build_envelope(text, room, key, number, packet_id), qos=1)
         if getattr(info, 'rc', 0) != 0:
             raise ValueError('The broker connection refused the message; try again.')
+        self.receipts[packet_id] = info
+        while len(self.receipts) > 100:
+            self.receipts.pop(next(iter(self.receipts)))
         return packet_id, f'!{number:08x}'

@@ -2,7 +2,8 @@
 import configparser
 import unittest
 from sitdown_dual_mqtt import MAX_TOPICS, DualMQTTMonitors, topics_allowed
-from sitdown_online import topic_list
+from types import SimpleNamespace
+from sitdown_online import refused, topic_list
 
 
 class Client:
@@ -67,6 +68,46 @@ class SubscribeTests(unittest.TestCase):
         m = manager('msh/US/2/e/SJMesh/+, msh/US/#')
         self.assertFalse(m.connect('sjmesh', factory=lambda: self.fail('unsafe connection')))
         self.assertIn('narrow topic', m.snapshot()['sjmesh']['status'])
+
+
+class SubackTests(unittest.TestCase):
+    """The Network page says listening only once the broker grants every topic, or traffic arrives."""
+
+    def connected(self):
+        m = manager('msh/US/2/e/SJMesh/+, msh/US/2/e/LongFast/+')
+        client = Client()
+        m.connect('sjmesh', factory=lambda: client)
+        monitor = m.monitors['sjmesh']
+        monitor._connect(client, None, None, 0, None)
+        return m, monitor, client
+
+    def test_all_topics_granted_means_subscribed(self):
+        m, monitor, client = self.connected()
+        monitor._subscribed(client, None, 1, [0], None)
+        self.assertEqual(monitor.status, 'Subscription requested (not yet confirmed)')    # one still pending
+        monitor._subscribed(client, None, 2, [SimpleNamespace(is_failure=False)], None)
+        self.assertEqual(monitor.status, 'Subscribed — listening')
+        m.stop()
+
+    def test_refused_topic_is_reported(self):
+        m, monitor, client = self.connected()
+        monitor._subscribed(client, None, 1, [0x80], None)
+        self.assertEqual(monitor.status, 'Subscription refused by broker')
+        monitor._subscribed(client, None, 99, [0], None)                                  # unknown mid ignored
+        self.assertEqual(monitor.status, 'Subscription refused by broker')
+        m.stop()
+
+    def test_traffic_confirms_a_missed_suback(self):
+        m, monitor, client = self.connected()
+        monitor._message(client, None, SimpleNamespace(retain=False, topic='msh/US/2/e/SJMesh/!1', payload=b''))
+        self.assertEqual(monitor.status, 'Subscribed — listening')
+        m.stop()
+
+    def test_refused_codes(self):
+        for code, expected in ((0, False), (1, False), (0x80, True), (0x87, True),
+                               (SimpleNamespace(is_failure=True), True), (SimpleNamespace(value=2), False), ('bad', True)):
+            with self.subTest(code=code):
+                self.assertEqual(refused(code), expected)
 
 
 if __name__ == '__main__':

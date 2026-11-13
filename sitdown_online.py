@@ -65,6 +65,21 @@ class WeatherDesk:
                 return 'Internet weather unavailable.' + (' Local report: ' + local if local else '')
 
 
+SUBSCRIBING = 'Subscription requested (not yet confirmed)'
+SUBSCRIBED = 'Subscribed — listening'
+
+
+def refused(code):
+    """A SUBACK reason code that refuses the topic (MQTT 0x80 and up), as an int or a paho ReasonCode."""
+    failure = getattr(code, 'is_failure', None)
+    if isinstance(failure, bool):
+        return failure
+    try:
+        return int(getattr(code, 'value', code)) >= 0x80
+    except (TypeError, ValueError):
+        return True
+
+
 def topic_list(value):
     """Split a comma-separated topic setting into its non-empty entries."""
     return [topic.strip() for topic in (value or '').split(',') if topic.strip()]
@@ -105,6 +120,7 @@ class ActivityCounter:
             client.on_disconnect = self._disconnect
             client.on_connect_fail = self._connect_fail
             client.on_message = self._message
+            client.on_subscribe = self._subscribed
             username = c.get('mqtt_monitor', 'username', fallback='')
             if username:
                 client.username_pw_set(username, c.get('mqtt_monitor', 'password', fallback=''))
@@ -124,11 +140,23 @@ class ActivityCounter:
     def _connect(self, client, userdata, flags, reason_code, properties):
         if reason_code == 0:
             self.recovery.connected()
-            results = [client.subscribe(topic)[0] for topic in topic_list(self.topic)]
-            self.status = ('Subscription requested (not yet confirmed)' if results and all(r == 0 for r in results)
+            results = [client.subscribe(topic) for topic in topic_list(self.topic)]
+            self.pending_subscriptions = {result[1] for result in results if result[0] == 0}
+            self.status = (SUBSCRIBING if results and all(result[0] == 0 for result in results)
                            else 'Subscription failed')
         else:
             self.status = 'Connection refused'
+
+    def _subscribed(self, client, userdata, mid, reason_codes, properties):
+        """The broker's SUBACK: every topic granted means listening; any refusal is reported."""
+        pending = getattr(self, 'pending_subscriptions', set())
+        if mid not in pending:
+            return
+        pending.discard(mid)
+        if any(refused(code) for code in (reason_codes or [])):
+            self.status = 'Subscription refused by broker'
+        elif not pending and self.status == SUBSCRIBING:
+            self.status = SUBSCRIBED
 
     def _disconnect(self, client, userdata, flags, reason_code, properties):
         self.status = 'Disconnected'
@@ -141,6 +169,8 @@ class ActivityCounter:
         # Retained history is not new activity. Keep bounded topic storage.
         if message.retain:
             return
+        if self.status == SUBSCRIBING:          # traffic proves the subscription even if the SUBACK was missed
+            self.status = SUBSCRIBED
         with self.lock:
             self.total += 1
             if message.topic in self.counts or len(self.counts) < 1000:

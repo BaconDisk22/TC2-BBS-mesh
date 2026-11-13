@@ -1212,6 +1212,7 @@ class SitdownApp:
                 if getattr(result, 'text', None) is not None and not self.own_mqtt_echo(network, result):
                     self.receive_mqtt_text(network, result)
             self.flush_mqtt_nodes()
+        self.note_mqtt_accepted()
         for network, box in self.wire_views.items():
             if not box.winfo_exists():
                 continue
@@ -1285,6 +1286,16 @@ class SitdownApp:
             self.log_chat_status(sent)
         return True
 
+    def note_mqtt_accepted(self):
+        """The broker's PUBACK for a message still waiting on its echo: '✓ broker accepted'."""
+        sender = getattr(self, 'mqtt_sender', None)
+        if sender is None:
+            return
+        for packet_id in sender.accepted():
+            sent = self.chat_log.set_status(packet_id, 'accepted')
+            if sent is not None:
+                self.log_chat_status(sent)
+
     def send_mqtt(self, key, name, draft):
         """Operator text to an MQTT channel: every gate in MQTTSender, plus a confirmation once per channel."""
         network, room = mqtt_room(key)
@@ -1355,7 +1366,8 @@ class SitdownApp:
         live = 0
         for network, variable in states.items():
             status = str((snapshot.get(network) or {}).get('status') or 'Off')
-            friendly = {'Subscription requested (not yet confirmed)': 'Connected — listening',
+            friendly = {'Subscription requested (not yet confirmed)': 'Connected — subscribing',
+                        'Subscribed — listening': 'Connected — listening',
                         'Disabled': 'Off', 'Stopped': 'Off'}.get(status, status)
             if friendly.startswith('Connected'):
                 live += 1
