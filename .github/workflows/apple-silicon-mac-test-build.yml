@@ -91,6 +91,18 @@ jobs:
               assert plistlib.load(f)['CFBundleShortVersionString'] == expected
           print('Packaged app reports', expected)
           PYTHON
+      - name: Smoke test assistant link (MCP stdio) in the packaged app
+        run: |
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
+            '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_nodes","arguments":{}}}' \
+            | "dist/The Sitdown BBS.app/Contents/MacOS/The Sitdown BBS" --sitdown-assistant-mcp | tee mcp.log
+          grep -q '"serverInfo"' mcp.log
+          grep -q '"recent_messages"' mcp.log
+          ! grep -q '"send_message"' mcp.log
+          grep -q 'assistant link is off' mcp.log
       - name: Check the first-launch helper against the built app
         run: |
           set -u

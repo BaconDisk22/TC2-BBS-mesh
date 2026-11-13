@@ -31,6 +31,7 @@ from pubsub import pub
 from sitdown_utilities import LocalUtilities
 from sitdown_link import RadioLinkMonitor
 from sitdown_errors import explain_transport_error
+from mesh_integrations import hub_from_config
 
 # Exit code the desktop reads as "could not reach the radio" (not a crash).
 EXIT_RADIO_UNREACHABLE = 2
@@ -69,6 +70,34 @@ def describe_connect_failure(exc, system_config):
             f"{explain_transport_error(reason, system_config.get('interface_type', 'serial'))}")
 
 
+def make_assistant_sender(service, notify=None):
+    """Assistant posts go through the operator chat path: same checks and rate limit."""
+    def send(text, channel, destination):
+        if destination:
+            raise ValueError('The assistant can only post to channels; open direct messages from the desktop.')
+        event = service.chat_send(channel, text, on_status=notify)
+        if notify is not None:
+            notify({'type': 'result', 'action': 'chat',
+                    'text': 'Assistant message submitted to radio; waiting for a relay.', 'chat': event})
+        return event
+    return send
+
+
+def start_integrations(system_config, config_file, interface, notify=None):
+    """Optional webhooks / assistant link / metrics from [integrations] (all off by default)."""
+    hub = hub_from_config(system_config['config'], 'sitdown-bbs',
+                          Path(config_file or 'config.ini').resolve().parent / 'integrations')
+    hub.send_text = make_assistant_sender(interface.sitdown, notify)
+    hub.state.set_radio(connected=True, interface=system_config.get('interface_type'))
+    try:
+        hub.start()
+    except OSError as exc:
+        logging.warning('Assistant link could not start on 127.0.0.1:%s: %s', hub.settings.local_api_port, exc)
+    if hub.settings.any_enabled:
+        logging.info('Integrations: %s', hub.describe())
+    return hub
+
+
 def main():
     display_banner()
     args = init_cli_parser()
@@ -93,8 +122,11 @@ def main():
     logging.info(f"THE SITDOWN BBS is running on {system_config['interface_type']} interface...")
 
     initialize_database()
+    integrations = start_integrations(system_config, config_file, interface,
+                                      emit if args.desktop_control else None)
 
     def receive_packet(packet, interface):
+        integrations.observe(packet)
         if args.desktop_control:
             direct = claim_reply(packet, interface, interface.sitdown.conversations)
             if direct is not None:
@@ -127,7 +159,9 @@ def main():
     try:
         last_snapshot = 0
         while not stopping.wait(0.25):
-            if link.check():
+            gone = link.check()
+            integrations.state.set_radio(connected=link.last_state == 'sdk_connected')
+            if gone:
                 logging.error('Radio session disconnected for 30s; exiting for supervisor recovery')
                 return 1
             interface.sitdown.tick()
@@ -144,6 +178,7 @@ def main():
         logging.info("Shutting down the server...")
     finally:
         pub.unsubscribe(receive_packet, system_config['mqtt_topic'])
+        integrations.stop()
         interface.sitdown.mqtt.stop()
         interface.close()
         if js8call_client.connected:
