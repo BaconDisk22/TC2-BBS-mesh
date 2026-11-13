@@ -2203,6 +2203,11 @@ if __name__ == "__main__":
             root.destroy()
         print(f'SITDOWN_SMOKE_OK version={VERSION}', flush=True)
         sys.exit(0)
+    if "--sitdown-assistant-mcp" in sys.argv:
+        # Started by an assistant (e.g. Claude Desktop) as an MCP stdio server; no window.
+        import assistant_mcp
+        config = DATA / 'config.ini' if getattr(sys, 'frozen', False) else ROOT / 'config.ini'
+        sys.exit(assistant_mcp.main(config, config.parent / 'integrations'))
     if "--sitdown-server" in sys.argv:
         sys.argv.remove("--sitdown-server")
         import server  # Ensures PyInstaller includes the server and its dependencies.
